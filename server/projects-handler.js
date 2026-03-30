@@ -496,42 +496,6 @@ const handleUpdateProjectDetails = async (socket, data) => {
     }
 };
 
-// apps/ops/server/projects-handler.js
-// ADD THIS ROUTE below your existing GET projects/portals routes
-
-// Fetch Task Layout (The Schema Blueprint)
-router.get('/:profileId/portals/:portalId/projects/:projectId/tasklayouts', async (req, res) => {
-  const { profileId, portalId, projectId } = req.params;
-  const profile = profiles[profileId];
-
-  if (!profile) {
-    return res.status(404).json({ error: 'Profile not found' });
-  }
-
-  try {
-    const response = await fetch(
-      `https://projectsapi.zoho.com/restapi/portal/${portalId}/projects/${projectId}/tasklayouts/`,
-      {
-        headers: {
-          'Authorization': `Zoho-oauthtoken ${profile.access_token}`
-        }
-      }
-    );
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("Zoho API Layout Error:", errorText);
-      return res.status(response.status).json({ error: 'Failed to fetch layout from Zoho' });
-    }
-
-    const data = await response.json();
-    res.json(data);
-  } catch (error) {
-    console.error("Error fetching task layout:", error);
-    res.status(500).json({ error: 'Internal Server Error fetching layout' });
-  }
-});
-
 module.exports = {
     setActiveJobs,
     handleGetPortals,
