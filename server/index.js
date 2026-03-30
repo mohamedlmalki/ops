@@ -86,6 +86,7 @@ app.post('/api/zoho/auth', (req, res) => {
         'ZohoProjects.extensions.UPDATE',
         'ZohoProjects.extensions.DELETE',
 		'ZohoProjects.custom_fields.CREATE',
+		'ZohoProjects.custom_fields.READ',
         'ZohoMeeting.manageOrg.READ',
         'ZohoMeeting.webinar.READ',
         'ZohoMeeting.webinar.DELETE',
@@ -191,6 +192,62 @@ app.post('/api/projects/tasks/single', async (req, res) => {
         res.json(result);
     } catch (error) {
         res.status(500).json({ success: false, error: 'An unexpected server error occurred during single task creation.' });
+    }
+});
+
+app.post('/api/projects/fields/create', async (req, res) => {
+    try {
+        const { selectedProfileName, projectId, layoutId, displayName, fieldType } = req.body;
+        const profiles = readProfiles();
+        const activeProfile = profiles.find(p => p.profileName === selectedProfileName);
+
+        if (!activeProfile) {
+            return res.status(404).json({ success: false, error: 'Profile not found.' });
+        }
+
+        // 🔥 THE FIX: The backend grabs the Portal ID directly from your saved profile data!
+        const portalId = req.body.portalId || activeProfile.projects?.portalId;
+
+        if (!portalId) {
+            return res.status(400).json({ success: false, error: 'Portal ID missing from profile settings.' });
+        }
+
+        const result = await projectsHandler.handleCreateTaskField({
+            activeProfile,
+            portalId,
+            projectId,
+            layoutId,
+            displayName,
+            fieldType
+        });
+
+        res.json(result);
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message || 'Failed to create Zoho Projects field.' });
+    }
+});
+
+app.post('/api/projects/fields/update', async (req, res) => {
+    try {
+        const { selectedProfileName, portalId, projectId, fieldIdentifier, displayName } = req.body;
+        const profiles = readProfiles();
+        const activeProfile = profiles.find(p => p.profileName === selectedProfileName);
+
+        if (!activeProfile) {
+            return res.status(404).json({ success: false, error: 'Profile not found.' });
+        }
+
+        const result = await projectsHandler.handleUpdateTaskField({
+            activeProfile,
+            portalId,
+            projectId,
+            fieldIdentifier,
+            displayName
+        });
+
+        res.json(result);
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message || 'Failed to update Zoho Projects field.' });
     }
 });
 
@@ -441,9 +498,10 @@ io.on('connection', (socket) => {
         'getProjectsTaskLists': projectsHandler.handleGetTaskLists, 
         'getProjectsTasks': projectsHandler.handleGetTasks, 
         'startBulkCreateTasks': projectsHandler.handleStartBulkCreateTasks, 
-        'startBulkDeleteTasks': projectsHandler.handleStartBulkDeleteTasks, // <-- THIS WAS MISSING
+        'startBulkDeleteTasks': projectsHandler.handleStartBulkDeleteTasks,
         'getProjectsTaskLayout': projectsHandler.handleGetTaskLayout, 
-        'updateProjectDetails': projectsHandler.handleUpdateProjectDetails 
+        'updateProjectDetails': projectsHandler.handleUpdateProjectDetails,
+        'getProjectDetails': projectsHandler.handleGetProjectDetails 
     };
     
     for (const [event, handler] of Object.entries(projectsListeners)) { 
@@ -557,7 +615,6 @@ app.post("/api/sidebar-order", express.json(), async (req, res) => {
         res.status(500).json({ error: "Failed to save" });
     }
 });
-
 
 server.listen(PORT, () => {
     console.log(`🚀 Server is running on http://localhost:${PORT}`);

@@ -58,7 +58,7 @@ const SERVER_URL = "http://localhost:3000";
 const globalMemoryCache = {
     tasks: [] as ZohoTask[],
     deleteStates: {} as Record<string, ProjectsDeleteJobState>,
-    viewLogsMap: {} as Record<string, ViewLog[]>, // 🔥 FIXED: Logs are now stored per-profile!
+    viewLogsMap: {} as Record<string, ViewLog[]>, 
     taskLimit: "100",
     selectedTaskIds: new Set<string>()
 };
@@ -136,7 +136,6 @@ export const ProjectsTasksDashboard: React.FC<ProjectsTasksDashboardProps> = ({
       }); 
   }, [socket, activeProfileName, selectedProfile, selectedProjectId, currentProjectName]); 
 
-  // --- GIANT EXPLICIT LOGS ON FETCH ---
   const fetchTasks = useCallback(() => {
       console.log("\n=======================================================");
       console.log("🔄 [SERVER CALL] Requesting Tasks from Zoho API...");
@@ -148,11 +147,8 @@ export const ProjectsTasksDashboard: React.FC<ProjectsTasksDashboardProps> = ({
 
       if (socket && activeProfileName && selectedProjectId && selectedProfile) {
         setIsDataLoading(true);
-        
-        // 🔥 FIXED: Clear logs ONLY for the currently active profile
         setViewLogsMap(prev => ({ ...prev, [activeProfileName]: [] })); 
-        
-        setTasks([]); // Instantly clear table when a new fetch starts
+        setTasks([]); 
         socket.emit('getProjectsTasks', { selectedProfileName: activeProfileName, queryParams: { project_id: selectedProjectId, limit: taskLimit } });
       } else {
           console.log("❌ [FETCH ABORTED] Missing required parameters. State:", { socket: !!socket, activeProfileName, selectedProjectId });
@@ -169,7 +165,6 @@ export const ProjectsTasksDashboard: React.FC<ProjectsTasksDashboardProps> = ({
       const isProjectChanged = prevConfig.current.project !== selectedProjectId;
       const isLimitChanged = prevConfig.current.limit !== taskLimit;
 
-      // Fetch if memory is empty, OR if user changed project/limit dropdown
       if (tasks.length === 0 || isProjectChanged || isLimitChanged) {
           console.log("\n=======================================================");
           console.log("⚡ [AUTO-TRIGGER] Fetching Tasks due to Dropdown Change");
@@ -209,7 +204,6 @@ export const ProjectsTasksDashboard: React.FC<ProjectsTasksDashboardProps> = ({
         }
     };
 
-    // 🔥 FIXED: Direct logs into the isolated profile dictionary
     const handleTasksLog = (log: Omit<ViewLog, 'id' | 'timestamp'>) => {
         const currentProfile = activeProfileRef.current;
         if (!currentProfile) return;
@@ -356,7 +350,6 @@ export const ProjectsTasksDashboard: React.FC<ProjectsTasksDashboardProps> = ({
   const estimatedSecondsLeft = Math.ceil(remainingItems * 1.0); 
   const timeString = estimatedSecondsLeft > 60 ? `${Math.floor(estimatedSecondsLeft / 60)}m ${estimatedSecondsLeft % 60}s` : `${estimatedSecondsLeft}s`;
 
-  // 🔥 Grab ONLY the logs for the actively selected profile to pass down to the UI
   const currentIsolatedLogs = viewLogsMap[activeProfileName || ''] || [];
 
   return (
@@ -395,13 +388,7 @@ export const ProjectsTasksDashboard: React.FC<ProjectsTasksDashboardProps> = ({
                             <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
                                 <div className="flex flex-wrap items-center gap-4 w-full sm:w-auto">
                                     <Label className="whitespace-nowrap font-semibold">Max API Fetch Limit:</Label>
-                                    <Select value={taskLimit} onValueChange={(val) => { 
-                                        console.log("\n=======================================================");
-                                        console.log("🎯 [TASK VIEW] Limit Dropdown Value Changed!");
-                                        console.log("🆕 New Fetch Limit:", val);
-                                        console.log("=======================================================\n");
-                                        setTaskLimit(val); 
-                                    }}>
+                                    <Select value={taskLimit} onValueChange={(val) => setTaskLimit(val)}>
                                         <SelectTrigger className="w-[120px] bg-background">
                                             <SelectValue placeholder="100" />
                                         </SelectTrigger>
@@ -416,12 +403,7 @@ export const ProjectsTasksDashboard: React.FC<ProjectsTasksDashboardProps> = ({
                                     <Button 
                                         variant="outline" 
                                         size="sm"
-                                        onClick={() => {
-                                            console.log("\n=======================================================");
-                                            console.log("🖱️ [TASK VIEW] 'Refresh' Button Clicked Next to Limit Dropdown!");
-                                            console.log("=======================================================\n");
-                                            fetchTasks();
-                                        }}
+                                        onClick={fetchTasks}
                                         disabled={isDataLoading || !selectedProjectId}
                                         className="font-semibold text-blue-600 border-blue-200 hover:bg-blue-50 dark:hover:bg-blue-900/20"
                                     >
@@ -483,7 +465,6 @@ export const ProjectsTasksDashboard: React.FC<ProjectsTasksDashboardProps> = ({
                             )}
                         </div>
 
-                        {/* 🔥 Passing only the isolated logs into the display component */}
                         <TaskResultsDisplay 
                             tasks={tasks} projects={projects} selectedProjectId={selectedProjectId} setSelectedProjectId={setSelectedProjectId} fetchTasks={fetchTasks} 
                             viewLogs={currentIsolatedLogs}
@@ -500,13 +481,24 @@ export const ProjectsTasksDashboard: React.FC<ProjectsTasksDashboardProps> = ({
         </div>
       </DashboardLayout>
       
+      {/* 🔥 ADDED FULL JSON RESPONSE VIEWER HERE 🔥 */}
       <Dialog open={isStatusModalOpen} onOpenChange={setIsStatusModalOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col">
             <DialogHeader><DialogTitle>API Connection Status</DialogTitle></DialogHeader>
-            <div className={`p-4 rounded-md ${apiStatus.status === 'success' ? 'bg-green-100 text-green-900' : 'bg-red-100 text-red-900'}`}>
+            
+            <div className={`p-4 rounded-md shrink-0 ${apiStatus.status === 'success' ? 'bg-green-100 text-green-900' : 'bg-red-100 text-red-900'}`}>
                 <p className="font-bold text-lg">{apiStatus.status.toUpperCase()}</p>
                 <p className="text-sm mt-1">{apiStatus.message}</p>
             </div>
+
+            {apiStatus.fullResponse && (
+                <div className="mt-4 flex-1 min-h-0 flex flex-col">
+                    <p className="text-sm font-semibold mb-2 shrink-0">Full Response from Server:</p>
+                    <div className="bg-zinc-950 p-4 rounded-md border text-zinc-300 font-mono text-xs overflow-auto flex-1 shadow-inner">
+                        <pre>{JSON.stringify(apiStatus.fullResponse, null, 2)}</pre>
+                    </div>
+                </div>
+            )}
         </DialogContent>
       </Dialog>
     </>

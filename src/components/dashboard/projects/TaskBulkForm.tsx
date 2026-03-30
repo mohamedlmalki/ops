@@ -1,4 +1,3 @@
-// --- FILE: src/components/dashboard/projects/TaskBulkForm.tsx ---
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -8,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { ProjectsJobState, ZohoProject, ProjectsFormData, ProjectsJobs } from './ProjectsDataTypes';
-import { Loader2, Play, Pause, Square, ListFilterIcon, ImagePlus, Eye, Save, Upload, List, CheckCircle2, XCircle, Hash, AlertTriangle, Plus } from 'lucide-react';
+import { Loader2, Play, Pause, Square, ListFilterIcon, ImagePlus, Eye, Save, Upload, List, CheckCircle2, XCircle, Hash, AlertTriangle, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { Socket } from 'socket.io-client';
 import {
     DropdownMenu,
@@ -64,7 +63,7 @@ const CreateFieldDialog = ({ onApply, isLoading }: { onApply: (name: string, typ
     return (
         <Dialog open={isOpen} onOpenChange={setIsOpen}>
             <DialogTrigger asChild>
-                <Button variant="secondary" size="sm" disabled={isLoading} className="ml-2 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200">
+                <Button variant="secondary" size="sm" disabled={isLoading} className="bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200">
                     <Plus className="h-4 w-4 mr-1" />
                     Create Zoho Field
                 </Button>
@@ -76,7 +75,7 @@ const CreateFieldDialog = ({ onApply, isLoading }: { onApply: (name: string, typ
                 <div className="grid gap-4 py-4">
                     <div className="grid gap-2">
                         <Label htmlFor="fieldName">Field Name</Label>
-                        <Input id="fieldName" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Code Snippet 2" />
+                        <Input id="fieldName" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Client Email" />
                     </div>
                     <div className="grid gap-2">
                         <Label htmlFor="fieldType">Field Type</Label>
@@ -88,6 +87,7 @@ const CreateFieldDialog = ({ onApply, isLoading }: { onApply: (name: string, typ
                                 <SelectItem value="multiline">Multi-Line (Textarea)</SelectItem>
                                 <SelectItem value="text">Single Line (Text)</SelectItem>
                                 <SelectItem value="integer">Number</SelectItem>
+                                <SelectItem value="email">Email</SelectItem> {/* 🔥 ADDED EMAIL HERE */}
                             </SelectContent>
                         </Select>
                     </div>
@@ -191,6 +191,7 @@ const formatDuration = (seconds: number) => {
 
 interface TaskBulkFormProps {
   selectedProfileName: string | null;
+  portalId?: string; 
   projects: ZohoProject[];
   socket: Socket | null;
   jobState: ProjectsJobState;
@@ -205,6 +206,7 @@ interface TaskBulkFormProps {
 
 export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({ 
     selectedProfileName, 
+    portalId,
     projects, 
     socket, 
     jobState, 
@@ -246,36 +248,71 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
     });
   }, [selectedProfileName, setJobs, jobState]); 
 
+  // Dynamic Cache Loading
+  useEffect(() => {
+    if (selectedProfileName && jobState.formData.projectId) {
+      const cacheKey = `zoho_custom_fields_${selectedProfileName}_${jobState.formData.projectId}`;
+      const cachedFields = localStorage.getItem(cacheKey);
+      
+      if (cachedFields) {
+        try {
+          const parsed = JSON.parse(cachedFields);
+          handleFormDataChange('bulkDefaultData', parsed || {});
+        } catch (e) {
+          console.error("Failed to parse cached fields", e);
+        }
+      } else {
+        handleFormDataChange('bulkDefaultData', {});
+      }
+    }
+  }, [selectedProfileName, jobState.formData.projectId, handleFormDataChange]);
+
   const handleDynamicFieldChange = useCallback((columnName: string, value: string) => {
     if (!selectedProfileName) return;
     setJobs((prev) => {
       const prevJobState = prev[selectedProfileName] || jobState;
+      const newBulkData = {
+        ...prevJobState.formData.bulkDefaultData,
+        [columnName]: value,
+      };
+      
+      const currentProjectId = prevJobState.formData.projectId;
+      if (currentProjectId) {
+          const cacheKey = `zoho_custom_fields_${selectedProfileName}_${currentProjectId}`;
+          localStorage.setItem(cacheKey, JSON.stringify(newBulkData));
+      }
+      
       return {
         ...prev,
         [selectedProfileName]: {
           ...prevJobState,
           formData: {
             ...prevJobState.formData,
-            bulkDefaultData: {
-              ...prevJobState.formData.bulkDefaultData,
-              [columnName]: value,
-            },
+            bulkDefaultData: newBulkData,
           },
         },
       };
     });
   }, [selectedProfileName, setJobs, jobState]); 
 
+  const handleClearCustomFields = () => {
+    if (!selectedProfileName || !jobState.formData.projectId) return;
+    const cacheKey = `zoho_custom_fields_${selectedProfileName}_${jobState.formData.projectId}`;
+    localStorage.removeItem(cacheKey);
+    handleFormDataChange('bulkDefaultData', {});
+    toast({ title: "Fields Cleared", description: "Wiped custom fields for this project." });
+  };
+
   const onProjectChange = useCallback((newProjectId: string) => {
     handleFormDataChange('projectId', newProjectId);
     setAllFields([]);
     setTaskLayout(null);
-    handleFormDataChange('bulkDefaultData', {});
     handleFormDataChange('primaryField', 'name');
   }, [handleFormDataChange]); 
 
   useEffect(() => {
-    if (projects.length > 0 && !jobState.formData.projectId) { 
+    const currentValidProject = projects.find(p => p.id === jobState.formData.projectId);
+    if (projects.length > 0 && !currentValidProject) {
       onProjectChange(projects[0].id);
     }
   }, [projects, jobState.formData.projectId, onProjectChange]); 
@@ -345,6 +382,7 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
   useEffect(() => {
     if (allFields.length > 0 && jobState.formData.primaryField === 'name') {
       const emailField = allFields.find(field => 
+        field.column_type === 'email' || 
         field.display_name.toLowerCase().includes('email') || 
         field.i18n_display_name.toLowerCase().includes('email')
       );
@@ -486,9 +524,28 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
       <CardHeader>
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <CardTitle>Bulk Create Zoho Project Tasks</CardTitle>
-            <div className="flex items-center">
+            <div className="flex items-center space-x-2">
                 {jobState.formData.projectId && (
                     <>
+                        <Button 
+                            variant="outline" 
+                            size="sm" 
+                            onClick={() => {
+                                if (socket && selectedProfileName && jobState.formData.projectId) {
+                                    setIsLoadingLayout(true);
+                                    socket.emit('getProjectsTaskLayout', {
+                                        selectedProfileName,
+                                        projectId: jobState.formData.projectId
+                                    });
+                                    toast({ title: 'Refreshing Fields', description: 'Pulling the latest layout from Zoho...' });
+                                }
+                            }}
+                            disabled={isLoadingLayout || isProcessing}
+                            title="Refresh Custom Fields"
+                        >
+                            <RefreshCw className={`h-4 w-4 ${isLoadingLayout ? 'animate-spin' : ''}`} />
+                        </Button>
+
                         <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                                 <Button variant="outline" size="sm" disabled={isLoadingLayout || isProcessing}>
@@ -522,39 +579,51 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
                             </DropdownMenuContent>
                         </DropdownMenu>
 
-                        {/* --- THE NEW CREATE FIELD BUTTON --- */}
                         <CreateFieldDialog 
-                            isLoading={isLoadingLayout}
+                            isLoading={isLoadingLayout || isProcessing}
                             onApply={async (name, type) => {
+                                const trimmedName = String(name || '').trim();
+                                const trimmedType = String(type || '').trim();
+                                const layoutId = taskLayout?.layout_id;
+                                const projectId = jobState.formData.projectId;
+
+                                if (!selectedProfileName) return toast({ title: 'Missing Profile', description: 'Please select a profile.', variant: 'destructive' });
+                                if (!projectId) return toast({ title: 'Missing Project', description: 'Please select a project.', variant: 'destructive' });
+                                if (!layoutId) return toast({ title: 'Layout Not Ready', description: 'Layout is still loading. Wait 2 seconds.', variant: 'destructive' });
+                                if (!trimmedName) return toast({ title: 'Missing Field Name', description: 'Please enter a field name.', variant: 'destructive' });
+                                if (!trimmedType) return toast({ title: 'Missing Field Type', description: 'Please choose a field type.', variant: 'destructive' });
+
                                 setIsLoadingLayout(true);
+
                                 try {
-                                    // Make sure we grab the portal ID dynamically
-                                    const portalId = projects.find(p => p.id === selectedProjectId)?.portal_id || projects[0]?.portal_id;
-                                    
-                                    // Hit the custom backend endpoint we just created
                                     const response = await fetch('http://localhost:3000/api/projects/fields/create', {
                                         method: 'POST',
                                         headers: { 'Content-Type': 'application/json' },
                                         body: JSON.stringify({
                                             selectedProfileName,
-                                            portalId: portalId,
-                                            projectId: selectedProjectId,
-                                            layoutId: taskLayout?.layout_id,
-                                            displayName: name,
-                                            fieldType: type
+                                            projectId,
+                                            layoutId,
+                                            displayName: trimmedName,
+                                            fieldType: trimmedType
                                         })
                                     });
                                     
                                     const result = await response.json();
+
                                     if (result.success) {
-                                        toast({ title: 'Success', description: 'Field created successfully! Refreshing your layout...' });
-                                        // Tell the socket to immediately reload the layout so the new box appears instantly
+                                        toast({
+                                            title: 'Success',
+                                            description: result.message || 'Field created successfully! Refreshing your layout...'
+                                        });
+
+                                        setTaskLayout(null);
+                                        setAllFields([]);
                                         socket?.emit('getProjectsTaskLayout', {
                                             selectedProfileName,
-                                            projectId: selectedProjectId
+                                            projectId
                                         });
                                     } else {
-                                        toast({ title: 'Error Creating Field', description: result.error, variant: 'destructive' });
+                                        toast({ title: 'Error Creating Field', description: result.error || 'Unknown error.', variant: 'destructive' });
                                         setIsLoadingLayout(false);
                                     }
                                 } catch (e) {
@@ -736,6 +805,26 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
                     onChange={(e) => handleFormDataChange('primaryValues', e.target.value)} 
                     disabled={isProcessing}
                     />
+
+                    {/* 🔥 THE FIX: Moved SmartTextSplitter exactly below the primary values textarea! */}
+                    {!isLoadingLayout && allFields.length > 0 && (
+                        <div className="mt-4">
+                            <SmartTextSplitter
+                                fields={allFields
+                                    .filter(f => visibleFields[f.column_name] && f.column_name !== jobState.formData.primaryField)
+                                    .map(f => ({
+                                        api_name: f.column_name,
+                                        field_label: f.i18n_display_name || f.display_name,
+                                        data_type: f.column_type
+                                    }))}
+                                onSplitValues={(newValues) => {
+                                    Object.entries(newValues).forEach(([fieldApiName, chunkText]) => {
+                                        handleDynamicFieldChange(fieldApiName, chunkText);
+                                    });
+                                }}
+                            />
+                        </div>
+                    )}
                 </div>
             </div>
             
@@ -751,23 +840,18 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
                 )}
                 
                 {!isLoadingLayout && allFields.length > 0 && (
-                    <div className="space-y-4 rounded-md border p-4">
-                        <Label className="text-base font-medium">Custom Fields (Defaults)</Label>
-
-                        <SmartTextSplitter
-                            fields={allFields
-                                .filter(f => visibleFields[f.column_name] && f.column_name !== jobState.formData.primaryField)
-                                .map(f => ({
-                                    api_name: f.column_name,
-                                    field_label: f.i18n_display_name || f.display_name,
-                                    data_type: f.column_type
-                                }))}
-                            onSplitValues={(newValues) => {
-                                Object.entries(newValues).forEach(([fieldApiName, chunkText]) => {
-                                    handleDynamicFieldChange(fieldApiName, chunkText);
-                                });
-                            }}
-                        />
+                    <div className="space-y-4 rounded-md border p-4 shadow-sm relative">
+                        <div className="flex items-center justify-between mb-4">
+                            <Label className="text-base font-medium">Custom Fields (Defaults)</Label>
+                            <Button 
+                                variant="ghost" 
+                                size="sm" 
+                                onClick={handleClearCustomFields} 
+                                className="h-7 px-2 text-xs text-red-500 hover:text-red-700 hover:bg-red-50"
+                            >
+                                <Trash2 className="h-3 w-3 mr-1" /> Clear Fields
+                            </Button>
+                        </div>
 
                         <div className="grid grid-cols-1 gap-4">
                             {allFields

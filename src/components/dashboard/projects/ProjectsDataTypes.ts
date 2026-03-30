@@ -16,6 +16,7 @@ export interface ZohoTaskList {
 
 export interface ZohoTask {
     id: string;
+    id_string?: string;
     name: string;
     prefix: string;
     tasklist: {
@@ -29,6 +30,7 @@ export interface ZohoTask {
     created_time: string;
     due_date: string;
     details?: string;
+    [key: string]: any; // Allows custom fields dynamically (UDF_CHAR1, etc)
 }
 
 export interface ProjectsTasksFormData {
@@ -62,14 +64,26 @@ export interface TaskProgressState {
     filterText: string;
 }
 
-// <--- NEW: Background Delete Tracking State --->
-export interface ProjectsDeleteJobState {
-    isDeleting: boolean;
-    totalToDelete: number;
-    deletedCount: number;
-    failedCount: number;
-    failedIds: string[];
+// ---- NEW: ZOHO LAYOUT BLUEPRINT TYPES ----
+export interface ZohoLayoutField {
+  column_name: string;      
+  display_name: string;     
+  data_type: string;             
+  is_mandatory: boolean;    
+  is_readonly: boolean;     
+  max_length?: number;
+  pick_list_values?: Array<{ display_value: string, actual_value: string }>;
 }
-// <--- END NEW INTERFACE --->
 
-export { ProjectsJobState, ProjectsResult };
+export interface ZohoLayoutSection {
+  id: string;
+  name: string; 
+  customfield_details?: ZohoLayoutField[]; // For custom fields
+  field_details?: ZohoLayoutField[]; // For standard fields
+}
+
+export interface ZohoTaskLayout {
+  layout_id: string;
+  name: string;
+  section_details: ZohoLayoutSection[];
+}
