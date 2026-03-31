@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/card";
 import { 
     FileText, RefreshCw, Loader2, Check, X, Shield, Send, Users, Clock, 
-    Pause, Play, Square, CheckCircle2, XCircle, Hourglass, RotateCcw
+    Pause, Play, Square, CheckCircle2, XCircle, Hourglass, RotateCcw, Trash2
 } from 'lucide-react';
 import {
   Select,
@@ -222,31 +222,80 @@ const PeopleForms: React.FC<PeopleFormsProps> = (props) => {
     bulkDelay,
   } = formData;
 
-  // 🟢 FIXED: Extract stopAfterFailures explicitly
   const stopAfterFailures = (formData as any).stopAfterFailures;
 
-  // 🟢 NEW: FORCE GLOBAL STATE TO DEFAULT TO 4 ON FIRST LOAD
   useEffect(() => {
-      if (selectedProfile && activeJob) {
-          const currentFormData = activeJob.formData as any;
-          if (currentFormData.pauseInitialized === undefined) {
+      if (activeProfileName) {
+          const cacheKey = `zoho_people_general_cache_${activeProfileName}`;
+          const cachedDataStr = localStorage.getItem(cacheKey);
+          
+          if (cachedDataStr) {
+              try {
+                  const parsed = JSON.parse(cachedDataStr);
+                  setJobs(prev => {
+                      const currentJob = prev[activeProfileName] || createInitialJobState();
+                      return {
+                          ...prev,
+                          [activeProfileName]: {
+                              ...currentJob,
+                              formData: {
+                                  ...currentJob.formData,
+                                  selectedFormId: parsed.selectedFormId ?? currentJob.formData.selectedFormId,
+                                  bulkPrimaryField: parsed.bulkPrimaryField ?? currentJob.formData.bulkPrimaryField,
+                                  bulkPrimaryValues: parsed.bulkPrimaryValues ?? currentJob.formData.bulkPrimaryValues,
+                                  bulkDelay: parsed.bulkDelay ?? currentJob.formData.bulkDelay,
+                                  stopAfterFailures: parsed.stopAfterFailures ?? 4 
+                              }
+                          }
+                      };
+                  });
+              } catch(e) {
+                  console.error("Failed to parse cached people form data", e);
+              }
+          } else {
               setJobs(prev => {
-                  const currentJob = prev[selectedProfile.profileName] || createInitialJobState();
+                  const currentJob = prev[activeProfileName] || createInitialJobState();
                   return {
                       ...prev,
-                      [selectedProfile.profileName]: {
-                          ...currentJob,
-                          formData: {
-                              ...currentJob.formData,
-                              stopAfterFailures: 4, // Force default to 4!
-                              pauseInitialized: true
-                          }
-                      }
+                      [activeProfileName]: { ...currentJob, formData: { ...currentJob.formData, stopAfterFailures: 4 } }
                   };
               });
           }
       }
-  }, [selectedProfile, activeJob.formData, setJobs, createInitialJobState]);
+  }, [activeProfileName, setJobs, createInitialJobState]);
+
+  useEffect(() => {
+      if (activeProfileName && selectedFormId) {
+          const cacheKey = `zoho_people_bulk_defaults_${activeProfileName}_${selectedFormId}`;
+          const cachedStr = localStorage.getItem(cacheKey);
+          if (cachedStr) {
+              try {
+                  const parsed = JSON.parse(cachedStr);
+                  setJobs(prev => {
+                    const currentJob = prev[activeProfileName] || createInitialJobState();
+                    return { ...prev, [activeProfileName]: { ...currentJob, formData: { ...currentJob.formData, bulkDefaultData: parsed || {} } } };
+                  });
+              } catch(e) {}
+          } else {
+              setJobs(prev => {
+                const currentJob = prev[activeProfileName] || createInitialJobState();
+                return { ...prev, [activeProfileName]: { ...currentJob, formData: { ...currentJob.formData, bulkDefaultData: {} } } };
+              });
+          }
+      }
+  }, [activeProfileName, selectedFormId, setJobs, createInitialJobState]);
+
+  useEffect(() => {
+      if (activeProfileName && selectedFormId) {
+          const cacheKey = `zoho_people_single_${activeProfileName}_${selectedFormId}`;
+          const cachedStr = localStorage.getItem(cacheKey);
+          if (cachedStr) {
+              try { setSingleFormData(JSON.parse(cachedStr)); } catch(e){ setSingleFormData({}); }
+          } else {
+              setSingleFormData({});
+          }
+      }
+  }, [activeProfileName, selectedFormId]);
 
   const recordCount = useMemo(() => {
       if (!bulkPrimaryValues) return 0;
@@ -269,16 +318,6 @@ const PeopleForms: React.FC<PeopleFormsProps> = (props) => {
   const autoEmailField = useMemo(() => {
       return formFields.find(f => f.comptype === 'Email' || f.labelname.includes('Email'))?.labelname || null;
   }, [formFields]);
-
-  useEffect(() => {
-    if (!bulkPrimaryField && !activeJob.isProcessing) {
-      if (autoEmailField) {
-        handleFormStateChange('bulkPrimaryField', autoEmailField);
-      } else if (formFields.length > 0) {
-        handleFormStateChange('bulkPrimaryField', formFields[0].labelname);
-      }
-    }
-  }, [autoEmailField, formFields, activeJob.isProcessing]);
 
   useEffect(() => {
     if (peopleProfiles.length === 0) return;
@@ -322,8 +361,12 @@ const PeopleForms: React.FC<PeopleFormsProps> = (props) => {
     
     const handleFormComponentsResult = (result: { success: boolean, components?: FormComponent[], error?: string }) => {
         setIsLoadingComponents(false);
-        if (result.success && result.components) { setComponents(result.components); setSingleFormData({}); } 
-        else { setComponents([]); toast({ title: "Error Fetching Form Fields", description: result.error, variant: "destructive" }); }
+        if (result.success && result.components) { 
+            setComponents(result.components); 
+        } else { 
+            setComponents([]); 
+            toast({ title: "Error Fetching Form Fields", description: result.error, variant: "destructive" }); 
+        }
     };
     
     const handleInsertResult = (result: { success: boolean, result?: any, error?: string }) => {
@@ -331,6 +374,9 @@ const PeopleForms: React.FC<PeopleFormsProps> = (props) => {
         if (result.success) {
             toast({ title: "Record Added Successfully", description: result.result?.message || `Record ID: ${result.result?.pkId}` });
             setSingleFormData({});
+            if (activeProfileName && selectedFormId) {
+                localStorage.removeItem(`zoho_people_single_${activeProfileName}_${selectedFormId}`);
+            }
         } else {
             toast({ title: "Failed to Add Record", description: result.error, variant: "destructive" });
         }
@@ -383,7 +429,47 @@ const PeopleForms: React.FC<PeopleFormsProps> = (props) => {
       props.socket.off('bulkComplete', handleBulkComplete);
       props.socket.off('bulkEnded', handleBulkEnded);
     };
-  }, [props.socket, toast, setJobs]);
+  }, [props.socket, toast, setJobs, activeProfileName, selectedFormId]);
+
+  // 🔥 THE "GOD MODE" SMART SESSION RECOVERY LISTENER 🔥
+  useEffect(() => {
+      if (!props.socket || !selectedProfile || !selectedForm) return;
+      
+      const onRecovery = (data: { profileName: string, jobType: string }) => {
+          if (data.profileName === selectedProfile.profileName && data.jobType === 'people') {
+              const allValues = bulkPrimaryValues.split('\n').map(v => v.trim()).filter(Boolean);
+              const processedCount = activeJob.results.length;
+              const remainingValues = allValues.slice(processedCount);
+
+              if (remainingValues.length === 0) {
+                  toast({ title: 'Complete', description: 'No remaining records.' });
+                  setJobs((prev: any) => ({ ...prev, [selectedProfile.profileName]: { ...prev[selectedProfile.profileName], isPaused: false, isProcessing: false, isComplete: true }}));
+                  return;
+              }
+
+              setJobs(prev => ({ 
+                  ...prev, 
+                  [selectedProfile.profileName]: { ...prev[selectedProfile.profileName], isPaused: false, isProcessing: true, isComplete: false }
+              }));
+
+              props.socket.emit('startBulkInsertPeopleRecords', {
+                  selectedProfileName: selectedProfile.profileName,
+                  formLinkName: selectedForm.formLinkName,
+                  primaryFieldLabelName: bulkPrimaryField,
+                  primaryFieldValues: remainingValues,
+                  defaultData: bulkDefaultData,
+                  delay: bulkDelay,
+                  stopAfterFailures: stopAfterFailures 
+              });
+
+              toast({ title: 'Session Recovered', description: `Resuming ${remainingValues.length} remaining records...` });
+          }
+      };
+      
+      props.socket.on('requestJobRecovery', onRecovery);
+      return () => { props.socket.off('requestJobRecovery', onRecovery); };
+  }, [props.socket, selectedProfile, selectedForm, bulkPrimaryValues, activeJob.results.length, bulkPrimaryField, bulkDefaultData, bulkDelay, stopAfterFailures]);
+
 
   useEffect(() => {
     if (selectedProfile && props.socket) {
@@ -401,11 +487,35 @@ const PeopleForms: React.FC<PeopleFormsProps> = (props) => {
         });
     } else {
         setComponents([]);
-        setSingleFormData({});
     }
   }, [selectedForm, props.socket, selectedProfile]);
   
+
+  const handleFormStateChange = useCallback((field: keyof PeopleFormData, value: any) => {
+    if (activeProfileName) {
+      if (field !== 'bulkDefaultData') {
+          const cacheKey = `zoho_people_general_cache_${activeProfileName}`;
+          const cachedData = JSON.parse(localStorage.getItem(cacheKey) || '{}');
+          cachedData[field] = value;
+          localStorage.setItem(cacheKey, JSON.stringify(cachedData));
+      }
+
+      setJobs(prev => {
+        const currentJob = prev[activeProfileName] || createInitialJobState();
+        return {
+          ...prev,
+          [activeProfileName]: {
+            ...currentJob,
+            formData: { ...currentJob.formData, [field]: value }
+          }
+        };
+      });
+    }
+  }, [activeProfileName, setJobs, createInitialJobState]);
+
   useEffect(() => {
+    if (isLoadingForms || forms.length === 0) return;
+    
     if (!activeJob.isProcessing && filteredForms.length > 0 && !selectedFormId) {
       handleFormStateChange('selectedFormId', filteredForms[0].componentId.toString());
     }
@@ -415,7 +525,20 @@ const PeopleForms: React.FC<PeopleFormsProps> = (props) => {
              handleFormStateChange('selectedFormId', filteredForms.length > 0 ? filteredForms[0].componentId.toString() : "");
         }
     }
-  }, [filteredForms, selectedFormId, activeJob.isProcessing]);
+  }, [filteredForms, selectedFormId, activeJob.isProcessing, isLoadingForms, forms.length, handleFormStateChange]);
+
+  useEffect(() => {
+    if (isLoadingComponents || components.length === 0) return;
+
+    if (!bulkPrimaryField && !activeJob.isProcessing) {
+      if (autoEmailField) {
+        handleFormStateChange('bulkPrimaryField', autoEmailField);
+      } else if (formFields.length > 0) {
+        handleFormStateChange('bulkPrimaryField', formFields[0].labelname);
+      }
+    }
+  }, [autoEmailField, formFields, activeJob.isProcessing, isLoadingComponents, components.length, bulkPrimaryField, handleFormStateChange]);
+
 
   const handleManualVerify = (service: string = 'people') => {
     if (props.socket && selectedProfile) {
@@ -432,7 +555,14 @@ const PeopleForms: React.FC<PeopleFormsProps> = (props) => {
   };
   
   const handleSingleFormChange = (labelname: string, value: string) => {
-      setSingleFormData(prev => ({ ...prev, [labelname]: value }));
+      setSingleFormData(prev => {
+          const newData = { ...prev, [labelname]: value };
+          if (activeProfileName && selectedFormId) {
+              const cacheKey = `zoho_people_single_${activeProfileName}_${selectedFormId}`;
+              localStorage.setItem(cacheKey, JSON.stringify(newData));
+          }
+          return newData;
+      });
   };
   
   const handleSubmit = () => {
@@ -449,37 +579,35 @@ const PeopleForms: React.FC<PeopleFormsProps> = (props) => {
 
   const handleToggleChange = (checked: boolean) => setShowCustomOnly(checked);
   
-  const handleFormStateChange = (field: keyof PeopleFormData, value: any) => {
-    if (selectedProfile) {
+  const handleBulkDefaultDataChange = useCallback((labelname: string, value: string) => {
+    if (activeProfileName && selectedFormId) {
       setJobs(prev => {
-        const currentJob = prev[selectedProfile.profileName] || createInitialJobState();
+        const currentJob = prev[activeProfileName] || createInitialJobState();
+        const newBulkData = { ...currentJob.formData.bulkDefaultData, [labelname]: value };
+
+        const cacheKey = `zoho_people_bulk_defaults_${activeProfileName}_${selectedFormId}`;
+        localStorage.setItem(cacheKey, JSON.stringify(newBulkData));
+
         return {
           ...prev,
-          [selectedProfile.profileName]: {
-            ...currentJob,
-            formData: { ...currentJob.formData, [field]: value }
-          }
-        };
-      });
-    }
-  };
-  
-  const handleBulkDefaultDataChange = (labelname: string, value: string) => {
-    if (selectedProfile) {
-      setJobs(prev => {
-        const currentJob = prev[selectedProfile.profileName] || createInitialJobState();
-        return {
-          ...prev,
-          [selectedProfile.profileName]: {
+          [activeProfileName]: {
             ...currentJob,
             formData: {
               ...currentJob.formData,
-              bulkDefaultData: { ...currentJob.formData.bulkDefaultData, [labelname]: value }
+              bulkDefaultData: newBulkData
             }
           }
         };
       });
     }
+  }, [activeProfileName, selectedFormId, setJobs, createInitialJobState]);
+
+  const handleClearDefaults = () => {
+      if (!activeProfileName || !selectedFormId) return;
+      const cacheKey = `zoho_people_bulk_defaults_${activeProfileName}_${selectedFormId}`;
+      localStorage.removeItem(cacheKey);
+      handleFormStateChange('bulkDefaultData', {});
+      toast({ title: "Defaults Cleared", description: "Wiped all default values." });
   };
 
   const handleStartBulkImport = () => {
@@ -517,9 +645,16 @@ const PeopleForms: React.FC<PeopleFormsProps> = (props) => {
   const handlePauseResume = () => {
     if (!props.socket || !selectedProfile) return;
     const isPaused = activeJob.isPaused;
-    props.socket.emit(isPaused ? 'resumeJob' : 'pauseJob', { profileName: selectedProfile.profileName, jobType: 'people' });
-    setJobs(prev => ({ ...prev, [selectedProfile.profileName]: { ...prev[selectedProfile.profileName], isPaused: !isPaused }}));
-    toast({ title: `Job ${isPaused ? 'Resumed' : 'Paused'}` });
+    
+    if (isPaused) {
+        props.socket.emit('resumeJob', { profileName: selectedProfile.profileName, jobType: 'people' });
+        setJobs(prev => ({ ...prev, [selectedProfile.profileName]: { ...prev[selectedProfile.profileName], isPaused: false, isProcessing: true }}));
+        toast({ title: 'Job Resuming...' });
+    } else {
+        props.socket.emit('pauseJob', { profileName: selectedProfile.profileName, jobType: 'people' });
+        setJobs(prev => ({ ...prev, [selectedProfile.profileName]: { ...prev[selectedProfile.profileName], isPaused: true }}));
+        toast({ title: `Job Paused` });
+    }
   };
 
   const handleEndJob = () => {
@@ -542,13 +677,13 @@ const PeopleForms: React.FC<PeopleFormsProps> = (props) => {
       if (failedItems.length === 0) { toast({ title: "No failed items found to retry." }); return; }
 
       const failedValues = failedItems.map(r => r.email).join('\n'); 
+      handleFormStateChange('bulkPrimaryValues', failedValues);
 
       setJobs(prev => ({
           ...prev,
           [selectedProfile.profileName]: {
               ...prev[selectedProfile.profileName],
-              isProcessing: false, isPaused: false, isComplete: false, results: [], processingTime: 0, totalToProcess: failedItems.length,
-              formData: { ...prev[selectedProfile.profileName].formData, bulkPrimaryValues: failedValues }
+              isProcessing: false, isPaused: false, isComplete: false, results: [], processingTime: 0, totalToProcess: failedItems.length
           }
       }));
       toast({ title: "Retry Ready", description: `${failedItems.length} failed records loaded. Click Start.` });
@@ -628,8 +763,27 @@ const PeopleForms: React.FC<PeopleFormsProps> = (props) => {
                 <TabsContent value="single">
                     <Card>
                         <CardHeader>
-                            <CardTitle>Add Record to "{selectedForm.displayName}"</CardTitle>
-                            <CardDescription>Fill out the fields below to add a new record.</CardDescription>
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <CardTitle>Add Record to "{selectedForm.displayName}"</CardTitle>
+                                    <CardDescription>Fill out the fields below to add a new record.</CardDescription>
+                                </div>
+                                <Button 
+                                    variant="ghost" 
+                                    size="sm" 
+                                    onClick={() => {
+                                        if (activeProfileName && selectedFormId) {
+                                            const cacheKey = `zoho_people_single_${activeProfileName}_${selectedFormId}`;
+                                            localStorage.removeItem(cacheKey);
+                                            setSingleFormData({});
+                                            toast({ title: "Form Cleared", description: "Wiped all fields." });
+                                        }
+                                    }} 
+                                    className="h-7 px-2 text-xs text-red-500 hover:text-red-700 hover:bg-red-50"
+                                >
+                                    <Trash2 className="h-3 w-3 mr-1" /> Clear Data
+                                </Button>
+                            </div>
                         </CardHeader>
                         <CardContent className="space-y-4">
                             {isLoadingComponents ? (
@@ -693,7 +847,6 @@ const PeopleForms: React.FC<PeopleFormsProps> = (props) => {
                                                 <Input id="delay" type="number" min="0" step="1" value={bulkDelay} onChange={(e) => handleFormStateChange('bulkDelay', parseInt(e.target.value) || 0)} className="w-24" disabled={activeJob.isProcessing} />
                                             </div>
 
-                                            {/* --- 🟢 FIXED AUTO-PAUSE INPUT --- */}
                                             <div className="space-y-2">
                                                 <Label htmlFor="stopFailures" className="whitespace-nowrap">Auto-pause after errors</Label>
                                                 <div className="flex items-center gap-2">
@@ -729,7 +882,17 @@ const PeopleForms: React.FC<PeopleFormsProps> = (props) => {
                                     </div>
                                     
                                     <div className="space-y-4">
-                                        <Label>Default Values (for all records)</Label>
+                                        <div className="flex items-center justify-between mb-4">
+                                            <Label className="text-base font-medium">Default Values (for all records)</Label>
+                                            <Button 
+                                                variant="ghost" 
+                                                size="sm" 
+                                                onClick={handleClearDefaults} 
+                                                className="h-7 px-2 text-xs text-red-500 hover:text-red-700 hover:bg-red-50"
+                                            >
+                                                <Trash2 className="h-3 w-3 mr-1" /> Clear Defaults
+                                            </Button>
+                                        </div>
                                         {formFields.filter(f => f.labelname !== bulkPrimaryField).map(field => (
                                             <DynamicFormField key={`bulk-${field.labelname}`} field={field} value={bulkDefaultData[field.labelname] || ''} onChange={handleBulkDefaultDataChange} isBulk={true} disabled={activeJob.isProcessing} />
                                         ))}

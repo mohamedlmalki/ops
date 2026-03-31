@@ -205,7 +205,6 @@ app.post('/api/projects/fields/create', async (req, res) => {
             return res.status(404).json({ success: false, error: 'Profile not found.' });
         }
 
-        // 🔥 THE FIX: The backend grabs the Portal ID directly from your saved profile data!
         const portalId = req.body.portalId || activeProfile.projects?.portalId;
 
         if (!portalId) {
@@ -447,9 +446,18 @@ io.on('connection', (socket) => {
         if (activeJobs[jobId]) activeJobs[jobId].status = 'paused';
     });
 
+    // 🔥 THE "GOD MODE" RESUME SYSTEM FIX 🔥
     socket.on('resumeJob', ({ profileName, jobType }) => {
         const jobId = createJobId(socket.id, profileName, jobType);
-        if (activeJobs[jobId]) activeJobs[jobId].status = 'running';
+        if (activeJobs[jobId]) {
+            // Normal pause/resume (server didn't restart)
+            activeJobs[jobId].status = 'running';
+            activeJobs[jobId].consecutiveFailures = 0; 
+        } else {
+            // SERVER RESTARTED OR REFRESHED!
+            // Tell the frontend to secretly send a new start payload with just the remaining items!
+            socket.emit('requestJobRecovery', { profileName, jobType });
+        }
     });
 
     socket.on('endJob', ({ profileName, jobType }) => {
@@ -491,7 +499,6 @@ io.on('connection', (socket) => {
     const creatorListeners = { 'getCreatorForms': creatorHandler.handleGetForms, 'getCreatorFormComponents': creatorHandler.handleGetFormComponents, 'insertCreatorRecord': creatorHandler.handleInsertRecord, 'startBulkInsertCreatorRecords': creatorHandler.handleStartBulkInsertCreatorRecords };
     for (const [event, handler] of Object.entries(creatorListeners)) { socket.on(event, (data) => { const profiles = readProfiles(); const activeProfile = data ? profiles.find(p => p.profileName === data.selectedProfileName) : null; if (activeProfile) { if (typeof handler === 'function') { handler(socket, { ...data, activeProfile }); } else { socket.emit('bulkError', { message: `Server error: Event ${event} is not configured.` }); } } else { socket.emit('bulkError', { message: 'Active profile not found.' }); } }); }
 
-    // --- 🚨 FIXED: ADDED 'startBulkDeleteTasks' TO THE LISTENER MAP BELOW 🚨 ---
     const projectsListeners = { 
         'getProjectsPortals': projectsHandler.handleGetPortals, 
         'getProjectsProjects': projectsHandler.handleGetProjects, 

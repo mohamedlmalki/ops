@@ -26,7 +26,6 @@ import BulkWebinarRegistration from './pages/BulkWebinarRegistration';
 import LiveStats from '@/pages/LiveStats';
 import { DashboardLayout } from '@/components/dashboard/DashboardLayout';
 import BulkContactsFsm from './pages/BulkContactsFsm';
-// --- NEW BOOKINGS IMPORT ---
 import BulkBookings from './pages/BulkBookings';
 import AppointmentManager from './pages/AppointmentManager';
 
@@ -66,7 +65,6 @@ export interface Profile {
   meeting?: {
     zsoid?: string;
   };
-  // --- ADDED BOOKINGS ---
   bookings?: {
     workspaceId: string;
   };
@@ -381,7 +379,6 @@ export interface FsmContactJobState {
 }
 export interface FsmContactJobs { [profileName: string]: FsmContactJobState; }
 
-// --- NEW BOOKINGS INTERFACES ---
 export interface BookingFormData {
     emails: string;
     defName: string;
@@ -392,8 +389,8 @@ export interface BookingFormData {
     timeGap: number;
     workStart: number;
     workEnd: number;
-    delay: number; // Added
-    stopAfterFailures: number; // Added
+    delay: number; 
+    stopAfterFailures: number; 
 }
 export interface BookingResult {
     email: string;
@@ -624,7 +621,6 @@ const createInitialFsmContactJobState = (): FsmContactJobState => ({
     filterText: '',
 });
 
-// --- NEW BOOKINGS INITIAL STATE ---
 const createInitialBookingJobState = (): BookingJobState => ({
     formData: {
         emails: '',
@@ -633,10 +629,10 @@ const createInitialBookingJobState = (): BookingJobState => ({
         serviceId: '',
         staffId: '',
         startTimeStr: new Date().toISOString().slice(0, 16),
-        timeGap: 5,  // Defaults to 5
+        timeGap: 5, 
         workStart: 9,
         workEnd: 17,
-        delay: 0,    // Defaults to 0
+        delay: 0,   
         stopAfterFailures: 0
     },
     results: [],
@@ -647,25 +643,65 @@ const createInitialBookingJobState = (): BookingJobState => ({
     processingTime: 0,
     totalToProcess: 0,
     countdown: 0,
-    currentDelay: 0, // Delay control default
+    currentDelay: 0, 
     filterText: '',
 });
 
 
+// 🔥 THE GOD MODE CACHE HOOK: Instantly saves the tables, forms, and progress of ALL modules
+function usePersistentJobs<T>(storageKey: string, initialValue: T) {
+    const [state, setState] = useState<T>(() => {
+        try {
+            const item = window.localStorage.getItem(storageKey);
+            if (item) {
+                const parsed = JSON.parse(item);
+                const safeState: any = {};
+                for (const profile in parsed) {
+                    const job = parsed[profile];
+                    // If the page was hard-refreshed while processing, smart-pause it
+                    // so the user's data table and results are perfectly maintained!
+                    const wasActive = job.isProcessing && !job.isPaused;
+                    safeState[profile] = {
+                        ...job,
+                        isProcessing: job.isProcessing || wasActive, 
+                        isPaused: job.isPaused || wasActive
+                    };
+                }
+                return safeState as T;
+            }
+        } catch (error) {
+            console.warn(`Error reading localStorage key "${storageKey}":`, error);
+        }
+        return initialValue;
+    });
+
+    useEffect(() => {
+        try {
+            window.localStorage.setItem(storageKey, JSON.stringify(state));
+        } catch (error) {
+            console.warn(`Error saving to localStorage (Storage might be full):`, error);
+        }
+    }, [state, storageKey]);
+
+    return [state, setState] as const;
+}
+
+
 const MainApp = () => {
     const { toast } = useToast();
-    const [jobs, setJobs] = useState<Jobs>({});
-    const [invoiceJobs, setInvoiceJobs] = useState<InvoiceJobs>({});
-    const [catalystJobs, setCatalystJobs] = useState<CatalystJobs>({}); 
-    const [emailJobs, setEmailJobs] = useState<EmailJobs>({}); 
-    const [qntrlJobs, setQntrlJobs] = useState<QntrlJobs>({});
-    const [peopleJobs, setPeopleJobs] = useState<PeopleJobs>({});
-    const [creatorJobs, setCreatorJobs] = useState<CreatorJobs>({});
-    const [projectsJobs, setProjectsJobs] = useState<ProjectsJobs>({});
-    const [webinarJobs, setWebinarJobs] = useState<WebinarJobs>({});
-    const [fsmContactJobs, setFsmContactJobs] = useState<FsmContactJobs>({});
-    // --- NEW BOOKINGS STATE ---
-    const [bookingJobs, setBookingJobs] = useState<BookingJobs>({});
+    
+    // 🔥 UPGRADED STATE SYSTEM: Everything is now completely crash-proof
+    const [jobs, setJobs] = usePersistentJobs<Jobs>('zoho_cache_jobs_ticket', {});
+    const [invoiceJobs, setInvoiceJobs] = usePersistentJobs<InvoiceJobs>('zoho_cache_jobs_invoice', {});
+    const [catalystJobs, setCatalystJobs] = usePersistentJobs<CatalystJobs>('zoho_cache_jobs_catalyst', {}); 
+    const [emailJobs, setEmailJobs] = usePersistentJobs<EmailJobs>('zoho_cache_jobs_email', {}); 
+    const [qntrlJobs, setQntrlJobs] = usePersistentJobs<QntrlJobs>('zoho_cache_jobs_qntrl', {});
+    const [peopleJobs, setPeopleJobs] = usePersistentJobs<PeopleJobs>('zoho_cache_jobs_people', {});
+    const [creatorJobs, setCreatorJobs] = usePersistentJobs<CreatorJobs>('zoho_cache_jobs_creator', {});
+    const [projectsJobs, setProjectsJobs] = usePersistentJobs<ProjectsJobs>('zoho_cache_jobs_projects', {});
+    const [webinarJobs, setWebinarJobs] = usePersistentJobs<WebinarJobs>('zoho_cache_jobs_webinar', {});
+    const [fsmContactJobs, setFsmContactJobs] = usePersistentJobs<FsmContactJobs>('zoho_cache_jobs_fsmContact', {});
+    const [bookingJobs, setBookingJobs] = usePersistentJobs<BookingJobs>('zoho_cache_jobs_booking', {});
 
     const socketRef = useRef<Socket | null>(null);
     const queryClient = useQueryClient();
@@ -683,7 +719,6 @@ const MainApp = () => {
     useJobTimer(projectsJobs, setProjectsJobs, 'projects');
     useJobTimer(webinarJobs, setWebinarJobs, 'webinar');
     useJobTimer(fsmContactJobs, setFsmContactJobs, 'fsm-contact');
-    // --- NEW BOOKINGS TIMER ---
     useJobTimer(bookingJobs, setBookingJobs, 'bookings');
 
     useEffect(() => {
@@ -727,18 +762,24 @@ const MainApp = () => {
 
         socket.on('jobPaused', (data: { profileName: string, reason: string, jobType?: string }) => {
             const type = data.jobType || 'ticket'; 
+            
+            const pauseUpdater = (prev: any) => {
+                if (!prev[data.profileName]) return prev;
+                return { ...prev, [data.profileName]: { ...prev[data.profileName], isPaused: true } };
+            };
 
-            if (type === 'ticket') {
-                setJobs(prevJobs => {
-                    if (!prevJobs[data.profileName]) return prevJobs;
-                    return { ...prevJobs, [data.profileName]: { ...prevJobs[data.profileName], isPaused: true } };
-                });
-            } else if (type === 'people') {
-                setPeopleJobs(prevJobs => {
-                    if (!prevJobs[data.profileName]) return prevJobs;
-                    return { ...prevJobs, [data.profileName]: { ...prevJobs[data.profileName], isPaused: true } };
-                });
-            }
+            if (type === 'ticket') setJobs(pauseUpdater);
+            else if (type === 'invoice') setInvoiceJobs(pauseUpdater);
+            else if (type === 'catalyst') setCatalystJobs(pauseUpdater);
+            else if (type === 'email') setEmailJobs(pauseUpdater);
+            else if (type === 'qntrl') setQntrlJobs(pauseUpdater);
+            else if (type === 'people') setPeopleJobs(pauseUpdater);
+            else if (type === 'creator') setCreatorJobs(pauseUpdater);
+            else if (type === 'projects') setProjectsJobs(pauseUpdater);
+            else if (type === 'webinar') setWebinarJobs(pauseUpdater);
+            else if (type === 'fsm-contact') setFsmContactJobs(pauseUpdater);
+            else if (type === 'bookings') setBookingJobs(pauseUpdater);
+
             toast({ 
                 title: "Job Paused Automatically", 
                 description: data.reason, 
@@ -879,8 +920,6 @@ const MainApp = () => {
                 };
             });
         });
-
-        // --- NEW BOOKINGS LISTENER ---
         socket.on('bookingResult', (result: BookingResult & { profileName: string }) => {
             setBookingJobs(prevJobs => {
                 const profileJob = prevJobs[result.profileName] || createInitialBookingJobState();
@@ -912,7 +951,6 @@ const MainApp = () => {
                     case 'projects': return createInitialProjectsJobState();
                     case 'webinar': return createInitialWebinarJobState();
                     case 'fsm-contact': return createInitialFsmContactJobState();
-                    // --- BOOKINGS ---
                     case 'bookings': return createInitialBookingJobState();
                     default: return {} as any;
                 }
@@ -942,7 +980,6 @@ const MainApp = () => {
             else if (jobType === 'projects') setProjectsJobs(updater);
             else if (jobType === 'webinar') setWebinarJobs(updater);
             else if (jobType === 'fsm-contact') setFsmContactJobs(updater);
-            // --- BOOKINGS ---
             else if (jobType === 'bookings') setBookingJobs(updater);
             
             toast({ title, description, variant });
@@ -1010,240 +1047,29 @@ const MainApp = () => {
         <>
             <BrowserRouter>
                 <Routes>
-                    <Route
-                        path="/"
-                        element={
-                            <Index
-                                jobs={jobs}
-                                setJobs={setJobs}
-                                socket={socketRef.current}
-                                createInitialJobState={createInitialJobState}
-                                onAddProfile={handleOpenAddProfile}
-                                onEditProfile={handleOpenEditProfile}
-                                onDeleteProfile={handleDeleteProfile}
-                            />
-                        }
-                    />
-                    <Route
-                        path="/single-ticket"
-                        element={
-                            <SingleTicket 
-                                onAddProfile={handleOpenAddProfile}
-                                onEditProfile={handleOpenEditProfile}
-                                onDeleteProfile={handleDeleteProfile}
-                            />
-                        }
-                    />
-                   
-                      <Route
-                        path="/email-statics"
-                        element={
-                            <EmailStatics
-                                onAddProfile={handleOpenAddProfile}
-                                onEditProfile={handleOpenEditProfile}
-                                onDeleteProfile={handleDeleteProfile}
-                            />
-                        }
-                    />
-                    <Route
-                        path="/bulk-signup"
-                        element={
-                            <BulkSignup
-                                jobs={catalystJobs}
-                                setJobs={setCatalystJobs}
-                                socket={socketRef.current}
-                                createInitialJobState={createInitialCatalystJobState}
-                                onAddProfile={handleOpenAddProfile}
-                                onEditProfile={handleOpenEditProfile}
-                                onDeleteProfile={handleDeleteProfile}
-                            />
-                        }
-                    />
-                    <Route
-                        path="/catalyst-users"
-                        element={
-                            <CatalystUsers
-                                socket={socketRef.current}
-                                onAddProfile={handleOpenAddProfile}
-                                onEditProfile={handleOpenEditProfile}
-                                onDeleteProfile={handleDeleteProfile}
-                            />
-                        }
-                    />
-                    <Route
-                        path="/bulk-email"
-                        element={
-                            <BulkEmail
-                                jobs={emailJobs}
-                                setJobs={setEmailJobs}
-                                socket={socketRef.current}
-                                createInitialJobState={createInitialEmailJobState}
-                                onAddProfile={handleOpenAddProfile}
-                                onEditProfile={handleOpenEditProfile}
-                                onDeleteProfile={handleDeleteProfile}
-                            />
-                        }
-                    />
-                    <Route
-                        path="/qntrl-forms" 
-                        element={
-                            <BulkQntrlCards
-                                jobs={qntrlJobs}
-                                setJobs={setQntrlJobs}
-                                socket={socketRef.current}
-                                createInitialJobState={createInitialQntrlJobState}
-                                onAddProfile={handleOpenAddProfile}
-                                onEditProfile={handleOpenEditProfile}
-                                onDeleteProfile={handleDeleteProfile}
-                            />
-                        }
-                    />
-                    <Route
-                        path="/people-forms" 
-                        element={
-                            <PeopleForms
-                                jobs={peopleJobs}
-                                setJobs={setPeopleJobs}
-                                socket={socketRef.current}
-                                createInitialJobState={createInitialPeopleJobState}
-                                onAddProfile={handleOpenAddProfile}
-                                onEditProfile={handleOpenEditProfile}
-                                onDeleteProfile={handleDeleteProfile}
-                            />
-                        }
-                    />
-                    <Route
-                        path="/creator-forms" 
-                        element={
-                            <CreatorForms
-                                jobs={creatorJobs}
-                                setJobs={setCreatorJobs}
-                                socket={socketRef.current}
-                                createInitialJobState={createInitialCreatorJobState}
-                                onAddProfile={handleOpenAddProfile}
-                                onEditProfile={handleOpenEditProfile}
-                                onDeleteProfile={handleDeleteProfile}
-                            />
-                        }
-                    />
-                    
-                    <Route
-                        path="/projects-tasks"
-                        element={
-                            <ProjectsTasksPage
-                                jobs={projectsJobs}
-                                setJobs={setProjectsJobs}
-                                socket={socketRef.current}
-                                createInitialJobState={createInitialProjectsJobState}
-                                onAddProfile={handleOpenAddProfile}
-                                onEditProfile={handleOpenEditProfile}
-                                onDeleteProfile={handleDeleteProfile}
-                            />
-                        }
-                    />
-                    
-                    <Route
-                        path="/bulk-webinar-registration"
-                        element={
-                            <BulkWebinarRegistration
-                                jobs={webinarJobs}
-                                setJobs={setWebinarJobs}
-                                socket={socketRef.current}
-                                createInitialJobState={createInitialWebinarJobState}
-                                onAddProfile={handleOpenAddProfile}
-                                onEditProfile={handleOpenEditProfile}
-                                onDeleteProfile={handleDeleteProfile}
-                            />
-                        }
-                    />
-                    <Route
-                        path="/bulk-fsm-contacts"
-                        element={
-                            <BulkContactsFsm
-                                jobs={fsmContactJobs}
-                                setJobs={setFsmContactJobs}
-                                createInitialJobState={createInitialFsmContactJobState}
-                                socket={socketRef.current}
-                                onAddProfile={handleOpenAddProfile}
-                                onEditProfile={handleOpenEditProfile}
-                                onDeleteProfile={handleDeleteProfile}
-                            />
-                        }
-                    />
-
-                    {/* --- NEW BOOKINGS ROUTE --- */}
-                    <Route
-                        path="/bulk-bookings"
-                        element={
-                            <BulkBookings
-                                jobs={bookingJobs}
-                                setJobs={setBookingJobs}
-                                createInitialJobState={createInitialBookingJobState}
-                                socket={socketRef.current}
-                                onAddProfile={handleOpenAddProfile}
-                                onEditProfile={handleOpenEditProfile}
-                                onDeleteProfile={handleDeleteProfile}
-                                profiles={[]} // Passed by DashboardLayout internally
-                            />
-                        }
-                    />
-					<Route
-    path="/appointment-manager"
-    element={
-        <AppointmentManager
-            socket={socketRef.current}
-            onAddProfile={handleOpenAddProfile}
-            onEditProfile={handleOpenEditProfile}
-            onDeleteProfile={handleDeleteProfile}
-            jobs={jobs}
-        />
-    }
-/>
-                    {/* --------------------------- */}
-                    
-                    <Route
-                        path="/live-stats"
-                        element={
-                            <DashboardLayout
-                                onAddProfile={handleOpenAddProfile}
-                                onEditProfile={handleOpenEditProfile}
-                                onDeleteProfile={handleDeleteProfile}
-                                profiles={[]} 
-                                selectedProfile={null}
-                                onProfileChange={() => {}}
-                                apiStatus={{ status: 'success', message: '' }}
-                                onShowStatus={() => {}}
-                                onManualVerify={() => {}}
-                                socket={socketRef.current}
-                                jobs={jobs}
-                            >
-                                <LiveStats 
-                                    jobs={jobs}
-                                    invoiceJobs={invoiceJobs}
-                                    catalystJobs={catalystJobs}
-                                    emailJobs={emailJobs}
-                                    qntrlJobs={qntrlJobs}
-                                    peopleJobs={peopleJobs}
-                                    creatorJobs={creatorJobs}
-                                    projectsJobs={projectsJobs}
-                                    webinarJobs={webinarJobs}
-                                    // --- ADDED BOOKINGS ---
-                                    bookingJobs={bookingJobs}
-                                />
-                            </DashboardLayout>
-                        }
-                    />
-
+                    <Route path="/" element={<Index jobs={jobs} setJobs={setJobs} socket={socketRef.current} createInitialJobState={createInitialJobState} onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} />} />
+                    <Route path="/single-ticket" element={<SingleTicket onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} />} />
+                    <Route path="/email-statics" element={<EmailStatics onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} />} />
+                    <Route path="/bulk-signup" element={<BulkSignup jobs={catalystJobs} setJobs={setCatalystJobs} socket={socketRef.current} createInitialJobState={createInitialCatalystJobState} onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} />} />
+                    <Route path="/catalyst-users" element={<CatalystUsers socket={socketRef.current} onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} />} />
+                    <Route path="/bulk-email" element={<BulkEmail jobs={emailJobs} setJobs={setEmailJobs} socket={socketRef.current} createInitialJobState={createInitialEmailJobState} onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} />} />
+                    <Route path="/qntrl-forms" element={<BulkQntrlCards jobs={qntrlJobs} setJobs={setQntrlJobs} socket={socketRef.current} createInitialJobState={createInitialQntrlJobState} onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} />} />
+                    <Route path="/people-forms" element={<PeopleForms jobs={peopleJobs} setJobs={setPeopleJobs} socket={socketRef.current} createInitialJobState={createInitialPeopleJobState} onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} />} />
+                    <Route path="/creator-forms" element={<CreatorForms jobs={creatorJobs} setJobs={setCreatorJobs} socket={socketRef.current} createInitialJobState={createInitialCreatorJobState} onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} />} />
+                    <Route path="/projects-tasks" element={<ProjectsTasksPage jobs={projectsJobs} setJobs={setProjectsJobs} socket={socketRef.current} createInitialJobState={createInitialProjectsJobState} onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} />} />
+                    <Route path="/bulk-webinar-registration" element={<BulkWebinarRegistration jobs={webinarJobs} setJobs={setWebinarJobs} socket={socketRef.current} createInitialJobState={createInitialWebinarJobState} onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} />} />
+                    <Route path="/bulk-fsm-contacts" element={<BulkContactsFsm jobs={fsmContactJobs} setJobs={setFsmContactJobs} createInitialJobState={createInitialFsmContactJobState} socket={socketRef.current} onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} />} />
+                    <Route path="/bulk-bookings" element={<BulkBookings jobs={bookingJobs} setJobs={setBookingJobs} createInitialJobState={createInitialBookingJobState} socket={socketRef.current} onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} profiles={[]} />} />
+					<Route path="/appointment-manager" element={<AppointmentManager socket={socketRef.current} onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} jobs={jobs} />} />
+                    <Route path="/live-stats" element={
+                        <DashboardLayout onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} profiles={[]} selectedProfile={null} onProfileChange={() => {}} apiStatus={{ status: 'success', message: '' }} onShowStatus={() => {}} onManualVerify={() => {}} socket={socketRef.current} jobs={jobs}>
+                            <LiveStats jobs={jobs} invoiceJobs={invoiceJobs} catalystJobs={catalystJobs} emailJobs={emailJobs} qntrlJobs={qntrlJobs} peopleJobs={peopleJobs} creatorJobs={creatorJobs} projectsJobs={projectsJobs} webinarJobs={webinarJobs} bookingJobs={bookingJobs} />
+                        </DashboardLayout>
+                    } />
                     <Route path="*" element={<NotFound />} />
                 </Routes>
             </BrowserRouter>
-            <ProfileModal
-                isOpen={isProfileModalOpen}
-                onClose={() => setIsProfileModalOpen(false)}
-                onSave={handleSaveProfile}
-                profile={editingProfile}
-                socket={socketRef.current}
-            />
+            <ProfileModal isOpen={isProfileModalOpen} onClose={() => setIsProfileModalOpen(false)} onSave={handleSaveProfile} profile={editingProfile} socket={socketRef.current} />
         </>
     );
 };

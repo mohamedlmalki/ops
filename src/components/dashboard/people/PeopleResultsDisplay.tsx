@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { 
     CheckCircle2, XCircle, Eye, Hash, Mail, Clock, BarChart3, 
     Download, Search, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight 
@@ -23,8 +24,6 @@ interface ResultsDisplayProps {
   primaryFieldLabel: string;
 }
 
-const ITEMS_PER_PAGE = 100;
-
 export const PeopleResultsDisplay: React.FC<ResultsDisplayProps> = ({ 
   results, 
   isProcessing, 
@@ -37,6 +36,7 @@ export const PeopleResultsDisplay: React.FC<ResultsDisplayProps> = ({
 }) => {
   const [statusFilter, setStatusFilter] = useState<'all' | 'success' | 'failed'>('all');
   const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(10); // 🔥 ADDED: State for Items Per Page
 
   // --- Filter Logic ---
   const filteredResults = useMemo(() => {
@@ -65,18 +65,18 @@ export const PeopleResultsDisplay: React.FC<ResultsDisplayProps> = ({
     return [...filteredResults].reverse();
   }, [filteredResults]);
 
-  const totalPages = Math.ceil(reversedFilteredResults.length / ITEMS_PER_PAGE);
+  const totalPages = Math.ceil(reversedFilteredResults.length / itemsPerPage);
 
-  // Reset to page 1 when filters change
+  // Reset to page 1 when filters or items per page change
   useEffect(() => {
     setCurrentPage(1);
-  }, [filterText, statusFilter]);
+  }, [filterText, statusFilter, itemsPerPage]);
 
   // Slice data for the current page
   const currentData = useMemo(() => {
-    const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
-    return reversedFilteredResults.slice(startIndex, startIndex + ITEMS_PER_PAGE);
-  }, [reversedFilteredResults, currentPage]);
+    const startIndex = (currentPage - 1) * itemsPerPage;
+    return reversedFilteredResults.slice(startIndex, startIndex + itemsPerPage);
+  }, [reversedFilteredResults, currentPage, itemsPerPage]);
   // ------------------------
 
   const successCount = results.filter(r => r.success).length;
@@ -231,7 +231,7 @@ export const PeopleResultsDisplay: React.FC<ResultsDisplayProps> = ({
                 <tbody className="bg-card divide-y divide-border">
                   {currentData.map((result, index) => {
                     // Correct index calculation for pagination + reverse logic
-                    const actualIndex = filteredResults.length - ((currentPage - 1) * ITEMS_PER_PAGE + index);
+                    const actualIndex = filteredResults.length - ((currentPage - 1) * itemsPerPage + index);
 
                     return (
                         <tr 
@@ -309,29 +309,51 @@ export const PeopleResultsDisplay: React.FC<ResultsDisplayProps> = ({
           )
         )}
 
-        {/* --- Pagination Controls --- */}
-        {totalPages > 1 && (
-            <div className="flex items-center justify-between px-2 pt-4">
-                <div className="text-xs text-muted-foreground">
-                    Showing {((currentPage - 1) * ITEMS_PER_PAGE) + 1} to {Math.min(currentPage * ITEMS_PER_PAGE, filteredResults.length)} of {filteredResults.length} entries
-                </div>
-                <div className="flex items-center space-x-2">
-                    <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setCurrentPage(1)} disabled={currentPage === 1}>
-                        <ChevronsLeft className="h-4 w-4" />
-                    </Button>
-                    <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1}>
-                        <ChevronLeft className="h-4 w-4" />
-                    </Button>
-                    <div className="flex items-center justify-center text-sm font-medium w-[80px]">
-                        Page {currentPage} / {totalPages}
+        {/* --- Pagination Controls & Row Selector --- */}
+        {(totalPages > 1 || filteredResults.length > 0) && (
+            <div className="flex flex-col sm:flex-row items-center justify-between px-2 pt-4 gap-4">
+                <div className="flex items-center space-x-4">
+                    <div className="text-xs text-muted-foreground">
+                        Showing {((currentPage - 1) * itemsPerPage) + 1} to {Math.min(currentPage * itemsPerPage, filteredResults.length)} of {filteredResults.length} entries
                     </div>
-                    <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages}>
-                        <ChevronRight className="h-4 w-4" />
-                    </Button>
-                    <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setCurrentPage(totalPages)} disabled={currentPage === totalPages}>
-                        <ChevronsRight className="h-4 w-4" />
-                    </Button>
+                    <div className="flex items-center space-x-2">
+                        <span className="text-xs text-muted-foreground">Rows per page:</span>
+                        <Select
+                            value={itemsPerPage.toString()}
+                            onValueChange={(val) => setItemsPerPage(Number(val))}
+                        >
+                            <SelectTrigger className="h-8 w-[70px] text-xs">
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="10">10</SelectItem>
+                                <SelectItem value="50">50</SelectItem>
+                                <SelectItem value="100">100</SelectItem>
+                                <SelectItem value="500">500</SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </div>
                 </div>
+
+                {totalPages > 1 && (
+                    <div className="flex items-center space-x-2">
+                        <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setCurrentPage(1)} disabled={currentPage === 1}>
+                            <ChevronsLeft className="h-4 w-4" />
+                        </Button>
+                        <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1}>
+                            <ChevronLeft className="h-4 w-4" />
+                        </Button>
+                        <div className="flex items-center justify-center text-sm font-medium w-[80px]">
+                            Page {currentPage} / {totalPages}
+                        </div>
+                        <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages}>
+                            <ChevronRight className="h-4 w-4" />
+                        </Button>
+                        <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setCurrentPage(totalPages)} disabled={currentPage === totalPages}>
+                            <ChevronsRight className="h-4 w-4" />
+                        </Button>
+                    </div>
+                )}
             </div>
         )}
 

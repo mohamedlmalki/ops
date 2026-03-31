@@ -4,7 +4,8 @@ import { cn } from '@/lib/utils';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { User, Building, AlertCircle, CheckCircle, Loader, RefreshCw, Activity, Edit, Trash2, PauseCircle, CheckCircle2, StopCircle, XCircle } from 'lucide-react';
+// 🔥 ADDED ChevronLeft and ChevronRight here
+import { User, Building, AlertCircle, CheckCircle, Loader, RefreshCw, Activity, Edit, Trash2, PauseCircle, CheckCircle2, StopCircle, XCircle, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Socket } from 'socket.io-client';
 import { Profile, Jobs as TicketJobs, InvoiceJobs, CatalystJobs, EmailJobs, QntrlJobs, PeopleJobs, CreatorJobs, ProjectsJobs, WebinarJobs, FsmContactJobs, BookingJobs } from '@/App'; 
 import {
@@ -81,6 +82,24 @@ export const ProfileSelector: React.FC<ProfileSelectorProps> = ({
     return strictlyFiltered;
   }, [profiles, service]);
 
+  // 🔥 FIX: Calculate the current index to manage the left/right arrows
+  const currentIndex = useMemo(() => {
+    if (!selectedProfile) return -1;
+    return filteredProfiles.findIndex(p => p.profileName === selectedProfile.profileName);
+  }, [selectedProfile, filteredProfiles]);
+
+  const handlePrevProfile = () => {
+    if (currentIndex > 0) {
+      onProfileChange(filteredProfiles[currentIndex - 1].profileName);
+    }
+  };
+
+  const handleNextProfile = () => {
+    if (currentIndex !== -1 && currentIndex < filteredProfiles.length - 1) {
+      onProfileChange(filteredProfiles[currentIndex + 1].profileName);
+    }
+  };
+
   useEffect(() => {
     if (!selectedProfile && filteredProfiles.length > 0) {
         onProfileChange(filteredProfiles[0].profileName);
@@ -154,8 +173,20 @@ export const ProfileSelector: React.FC<ProfileSelectorProps> = ({
       <div className="flex flex-col gap-2 shrink-0">
         
         {/* --- ROW 1: DROPDOWN & ICONS --- */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           
+          {/* 🔥 NEW: Left Arrow Button */}
+          <Button 
+            variant="outline" 
+            size="icon" 
+            className="h-9 w-9 shrink-0 shadow-sm" 
+            onClick={handlePrevProfile}
+            disabled={currentIndex <= 0 || filteredProfiles.length === 0}
+            title="Previous Profile"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+
           {/* Dropdown (Fixed at 350px exactly like old card) */}
           <div className="w-[350px] shrink-0">
             <Select 
@@ -218,9 +249,21 @@ export const ProfileSelector: React.FC<ProfileSelectorProps> = ({
             </Select>
           </div>
 
+          {/* 🔥 NEW: Right Arrow Button */}
+          <Button 
+            variant="outline" 
+            size="icon" 
+            className="h-9 w-9 shrink-0 shadow-sm" 
+            onClick={handleNextProfile}
+            disabled={currentIndex === -1 || currentIndex >= filteredProfiles.length - 1 || filteredProfiles.length === 0}
+            title="Next Profile"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+
           {/* Icons (Status + Refresh) */}
           {selectedProfile && (
-            <div className="flex items-center gap-3 shrink-0 border-l pl-3">
+            <div className="flex items-center gap-3 shrink-0 border-l pl-3 ml-1">
               <Button 
                 variant={apiStatus?.status === 'success' ? 'default' : apiStatus?.status === 'error' ? 'destructive' : 'secondary'} 
                 size="icon" 

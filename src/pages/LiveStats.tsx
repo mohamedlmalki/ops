@@ -7,12 +7,12 @@ import { Progress } from '@/components/ui/progress';
 import { 
     Activity, CheckCircle2, AlertCircle, ExternalLink, 
     Ticket, Package, Cloud, Mail, Network, FileText, AppWindow, FolderKanban, Video, Clock, CreditCard,
-    Calendar // --- Added Calendar Icon
+    Calendar 
 } from 'lucide-react';
 import { 
     Jobs, CatalystJobs, EmailJobs, QntrlJobs, 
     PeopleJobs, CreatorJobs, ProjectsJobs, WebinarJobs,
-    BookingJobs // --- Added Type
+    BookingJobs 
 } from '@/App';
 import { formatTime } from '@/lib/utils';
 
@@ -25,7 +25,7 @@ interface LiveStatsProps {
     creatorJobs: CreatorJobs;
     projectsJobs: ProjectsJobs;
     webinarJobs: WebinarJobs;
-    bookingJobs: BookingJobs; // --- Added Prop
+    bookingJobs: BookingJobs; 
 }
 
 const ServiceStatCard = ({ 
@@ -70,7 +70,6 @@ const ServiceStatCard = ({
                     const successCount = job.results.filter((r: any) => r.success).length;
                     const failCount = job.results.filter((r: any) => !r.success).length;
                     const totalProcessed = job.results.length;
-                    // Handle different naming conventions for total count
                     const totalToProcess = job.totalToProcess || job.totalTicketsToProcess || 0;
                     const progress = totalToProcess > 0 ? (totalProcessed / totalToProcess) * 100 : 0;
                     
@@ -87,9 +86,9 @@ const ServiceStatCard = ({
                                         {profileName}
                                         <ExternalLink className="h-3 w-3 opacity-50 group-hover:opacity-100" />
                                     </Badge>
-                                    {job.isPaused && <Badge variant="secondary" className="text-xs">Paused</Badge>}
+                                    {job.isPaused && <Badge variant="secondary" className="text-xs bg-yellow-100 text-yellow-800 hover:bg-yellow-100">Paused</Badge>}
                                 </div>
-                                {job.isProcessing ? (
+                                {job.isProcessing && !job.isPaused ? (
                                     <span className="flex items-center text-xs text-blue-600 font-medium animate-pulse">
                                         <Activity className="h-3 w-3 mr-1" /> Running
                                     </span>
@@ -133,7 +132,6 @@ const ServiceStatCard = ({
 };
 
 export const LiveStats: React.FC<LiveStatsProps> = (props) => {
-    // Force re-render every second to update "Total Time Elapsed"
     const [now, setNow] = useState(Date.now());
 
     useEffect(() => {
@@ -141,11 +139,10 @@ export const LiveStats: React.FC<LiveStatsProps> = (props) => {
         return () => clearInterval(interval);
     }, []);
 
-    // Calculate global stats
     const allJobs = [
         props.jobs, props.catalystJobs, props.emailJobs, 
         props.qntrlJobs, props.peopleJobs, props.creatorJobs, props.projectsJobs, 
-        props.bookingJobs // --- Added Bookings
+        props.bookingJobs 
     ];
     
     let activeJobCount = 0;
@@ -160,50 +157,41 @@ export const LiveStats: React.FC<LiveStatsProps> = (props) => {
             const hasActivity = job.results?.length > 0 || job.isProcessing;
             
             if (hasActivity) {
-                if (job.isProcessing) activeJobCount++;
+                // 🔥 FIX: Only count as active if processing AND NOT paused
+                if (job.isProcessing && !job.isPaused) activeJobCount++;
+                
                 if (job.results) {
                     totalSuccess += job.results.filter((r: any) => r.success).length;
                     totalErrors += job.results.filter((r: any) => !r.success).length;
                 }
 
-                // --- Improved Global Time Logic ---
                 if (job.processingStartTime) {
                     const start = new Date(job.processingStartTime).getTime();
                     
-                    // 1. Determine Global Start
                     if (globalStartTime === null || start < globalStartTime) {
                         globalStartTime = start;
                     }
                     
-                    // 2. Determine End Time for this specific job
                     let end = start; 
 
-                    if (job.isProcessing) {
-                        // If running, the job extends to "now"
+                    // 🔥 FIX: Timer logic now respects paused states
+                    if (job.isProcessing && !job.isPaused) {
                         end = now;
                     } else {
-                        // If job is stopped/completed, we try to determine the actual last activity time.
-                        // Attempt to find the latest timestamp in results (covers cases of pauses)
                         let lastResultTime = 0;
                         if (job.results && job.results.length > 0) {
-                             // Check first and last element for max timestamp to handle 
-                             // both push() and unshift() array approaches used in App.tsx
                              const first = job.results[0]?.timestamp ? new Date(job.results[0].timestamp).getTime() : 0;
                              const last = job.results[job.results.length - 1]?.timestamp ? new Date(job.results[job.results.length - 1].timestamp).getTime() : 0;
                              lastResultTime = Math.max(first, last);
                         }
 
                         if (lastResultTime > start) {
-                            // If we have valid result timestamps, use the latest one
                             end = lastResultTime;
                         } else if (job.processingTime) {
-                            // Fallback for jobs that don't track timestamps (e.g. Invoice/Catalyst)
-                            // This assumes continuous run (no pauses) which is an estimation
                             end = start + (job.processingTime * 1000); 
                         }
                     }
 
-                    // 3. Determine Global End
                     if (globalEndTime === null || end > globalEndTime) {
                         globalEndTime = end;
                     }
@@ -212,7 +200,6 @@ export const LiveStats: React.FC<LiveStatsProps> = (props) => {
         });
     });
 
-    // Calculate Total Elapsed Time in SECONDS
     const totalElapsedSeconds = (globalStartTime && globalEndTime) 
         ? Math.floor(Math.max(0, globalEndTime - globalStartTime) / 1000) 
         : 0;
@@ -259,7 +246,7 @@ export const LiveStats: React.FC<LiveStatsProps> = (props) => {
                  <Card>
                     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                         <CardTitle className="text-sm font-medium">Total Time Elapsed</CardTitle>
-                        <Clock className="h-4 w-4 text-purple-500" />
+                        <Clock className={`h-4 w-4 ${activeJobCount > 0 ? 'text-purple-500 animate-pulse' : 'text-muted-foreground'}`} />
                     </CardHeader>
                     <CardContent>
                         <div className="text-2xl font-bold">{formatTime(totalElapsedSeconds)}</div>
@@ -278,7 +265,6 @@ export const LiveStats: React.FC<LiveStatsProps> = (props) => {
                 <ServiceStatCard title="Zoho Creator" icon={AppWindow} jobMap={props.creatorJobs} route="/creator-forms" />
                 <ServiceStatCard title="Zoho Projects" icon={FolderKanban} jobMap={props.projectsJobs} route="/projects-tasks" />
                 <ServiceStatCard title="Zoho Meeting" icon={Video} jobMap={props.webinarJobs} route="/bulk-webinar-registration" />                
-                {/* --- ADDED BOOKINGS CARD --- */}
                 <ServiceStatCard title="Zoho Bookings" icon={Calendar} jobMap={props.bookingJobs} route="/bulk-bookings" />
             </div>
         </div>

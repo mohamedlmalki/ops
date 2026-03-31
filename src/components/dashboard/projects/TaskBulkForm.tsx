@@ -1,3 +1,4 @@
+// --- FILE: src/components/dashboard/projects/TaskBulkForm.tsx ---
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -87,7 +88,7 @@ const CreateFieldDialog = ({ onApply, isLoading }: { onApply: (name: string, typ
                                 <SelectItem value="multiline">Multi-Line (Textarea)</SelectItem>
                                 <SelectItem value="text">Single Line (Text)</SelectItem>
                                 <SelectItem value="integer">Number</SelectItem>
-                                <SelectItem value="email">Email</SelectItem> {/* 🔥 ADDED EMAIL HERE */}
+                                <SelectItem value="email">Email</SelectItem>
                             </SelectContent>
                         </Select>
                     </div>
@@ -233,6 +234,14 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
 
   const handleFormDataChange = useCallback((field: keyof ProjectsFormData | 'stopAfterFailures', value: any) => {
     if (!selectedProfileName) return;
+
+    if (field !== 'bulkDefaultData') {
+        const cacheKey = `zoho_projects_general_cache_${selectedProfileName}`;
+        const existingCache = JSON.parse(localStorage.getItem(cacheKey) || '{}');
+        existingCache[field] = value;
+        localStorage.setItem(cacheKey, JSON.stringify(existingCache));
+    }
+
     setJobs((prev) => {
       const prevJobState = prev[selectedProfileName] || jobState;
       return {
@@ -248,7 +257,38 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
     });
   }, [selectedProfileName, setJobs, jobState]); 
 
-  // Dynamic Cache Loading
+  useEffect(() => {
+    if (selectedProfileName) {
+        const cacheKey = `zoho_projects_general_cache_${selectedProfileName}`;
+        const cachedData = localStorage.getItem(cacheKey);
+        
+        if (cachedData) {
+            try {
+                const parsed = JSON.parse(cachedData);
+                setJobs((prev) => {
+                    const currentJob = prev[selectedProfileName] || jobState;
+                    return {
+                        ...prev,
+                        [selectedProfileName]: {
+                            ...currentJob,
+                            formData: {
+                                ...currentJob.formData,
+                                delay: parsed.delay ?? currentJob.formData.delay,
+                                stopAfterFailures: parsed.stopAfterFailures ?? currentJob.formData.stopAfterFailures,
+                                projectId: parsed.projectId ?? currentJob.formData.projectId,
+                                primaryField: parsed.primaryField ?? currentJob.formData.primaryField,
+                                primaryValues: parsed.primaryValues ?? currentJob.formData.primaryValues
+                            }
+                        }
+                    };
+                });
+            } catch (e) {
+                console.error("Failed to parse cached general form data", e);
+            }
+        }
+    }
+  }, [selectedProfileName, setJobs]);
+
   useEffect(() => {
     if (selectedProfileName && jobState.formData.projectId) {
       const cacheKey = `zoho_custom_fields_${selectedProfileName}_${jobState.formData.projectId}`;
@@ -392,6 +432,52 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
     }
   }, [allFields, jobState.formData.primaryField, handleFormDataChange]); 
 
+
+  // 🔥 THE "GOD MODE" SMART SESSION RECOVERY LISTENER 🔥
+  useEffect(() => {
+      if (!socket || !selectedProfileName) return;
+      
+      const onRecovery = (data: { profileName: string, jobType: string }) => {
+          if (data.profileName === selectedProfileName && data.jobType === 'projects') {
+              
+              const allTasks = jobState.formData.primaryValues.split('\n').map(name => name.trim()).filter(name => name.length > 0);
+              const processedCount = results.length;
+              const remainingTasks = allTasks.slice(processedCount);
+
+              if (remainingTasks.length === 0) {
+                  toast({ title: 'Job Already Complete', description: 'No tasks remaining.' });
+                  setJobs((prev: any) => ({ ...prev, [selectedProfileName]: { ...prev[selectedProfileName], isPaused: false, isProcessing: false, isComplete: true }}));
+                  return;
+              }
+
+              const formDataToResume = {
+                  ...jobState.formData,
+                  primaryValues: remainingTasks.join('\n'), 
+                  tasklistId: autoTaskListId,
+                  displayName: selectedProfileName,
+                  stopAfterFailures: stopAfterFailures
+              };
+
+              setJobs((prev: any) => ({
+                  ...prev,
+                  [selectedProfileName]: { ...prev[selectedProfileName], isPaused: false, isProcessing: true, isComplete: false },
+              }));
+
+              socket.emit('startBulkCreateTasks', {
+                  selectedProfileName,
+                  activeProfile: { projects: { portalId: projects.find(p => p.id === jobState.formData.projectId)?.portal_id } }, 
+                  formData: formDataToResume 
+              });
+
+              toast({ title: 'Session Recovered', description: `Resuming from task ${processedCount + 1}...` });
+          }
+      };
+      
+      socket.on('requestJobRecovery', onRecovery);
+      return () => { socket.off('requestJobRecovery', onRecovery); };
+  }, [socket, selectedProfileName, jobState.formData, results.length, autoTaskListId, stopAfterFailures, projects]);
+
+
   const handleStart = () => {
     const { projectId, primaryValues, delay } = jobState.formData; 
 
@@ -475,9 +561,9 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
         socket.emit('resumeJob', { profileName: selectedProfileName, jobType: 'projects' });
         setJobs((prev: any) => ({
             ...prev,
-            [selectedProfileName]: { ...prev[selectedProfileName], isPaused: false },
+            [selectedProfileName]: { ...prev[selectedProfileName], isPaused: false, isProcessing: true },
         }));
-        toast({ title: 'Job Resumed' });
+        toast({ title: 'Job Resuming...' });
     }
   };
 
@@ -806,7 +892,6 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
                     disabled={isProcessing}
                     />
 
-                    {/* 🔥 THE FIX: Moved SmartTextSplitter exactly below the primary values textarea! */}
                     {!isLoadingLayout && allFields.length > 0 && (
                         <div className="mt-4">
                             <SmartTextSplitter
