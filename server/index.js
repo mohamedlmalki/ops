@@ -446,17 +446,20 @@ io.on('connection', (socket) => {
         if (activeJobs[jobId]) activeJobs[jobId].status = 'paused';
     });
 
-    // 🔥 THE "GOD MODE" RESUME SYSTEM FIX 🔥
+    // 🔥 THE RESUME FIX IS HERE
     socket.on('resumeJob', ({ profileName, jobType }) => {
         const jobId = createJobId(socket.id, profileName, jobType);
         if (activeJobs[jobId]) {
-            // Normal pause/resume (server didn't restart)
             activeJobs[jobId].status = 'running';
-            activeJobs[jobId].consecutiveFailures = 0; 
+            activeJobs[jobId].consecutiveFailures = 0; // IMPORTANT: Reset errors so it doesn't instantly re-pause
         } else {
-            // SERVER RESTARTED OR REFRESHED!
-            // Tell the frontend to secretly send a new start payload with just the remaining items!
-            socket.emit('requestJobRecovery', { profileName, jobType });
+            // Smart Session Protection: Tell the frontend if the backend job was killed by a page refresh
+            socket.emit('bulkError', { 
+                profileName, 
+                jobType, 
+                message: "Job session lost (likely due to a page refresh). Please clear your completed items from the list and click 'Start Bulk Import' again to continue." 
+            });
+            socket.emit('bulkEnded', { profileName, jobType });
         }
     });
 
