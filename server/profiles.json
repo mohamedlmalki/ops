@@ -4444,12 +4444,12 @@
     "profileName": "82 (1)",
     "clientId": "1000.OWLSV4NQYSNMAWF9MVMWCMIGQSII1D",
     "clientSecret": "ff67004014d41738c6f02eb8ad3e6955fc94d301e2",
-    "refreshToken": "1000.d37d0642e7a4359e83743b8633847ced.3e49ce12b0338cbad46ab7f77373b3ed",
+    "refreshToken": "1000.6ccc1e1c1dd7a755a737c0ef3df34752.de634aca926e5955cfb455b3839d4b2d",
     "desk": {
       "orgId": "919661619",
-      "defaultDepartmentId": "",
-      "fromEmailAddress": "",
-      "mailReplyAddressId": ""
+      "defaultDepartmentId": "1321467000000006907",
+      "fromEmailAddress": "support@malidoe.zohodesk.com",
+      "mailReplyAddressId": "1321467000000409062"
     },
     "catalyst": {
       "projectId": "",

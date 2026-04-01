@@ -1,4 +1,5 @@
 // --- FILE: src/components/dashboard/desk/ResultsDisplay.tsx ---
+
 import React, { useMemo, useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -19,6 +20,7 @@ export interface TicketResult {
   details?: string;
   fullResponse?: any;
   timestamp?: Date | string; 
+  delugeStatus?: 'Success' | 'Failed' | 'Pending'; // --- NEW PROPERTY ---
 }
 
 interface ResultsDisplayProps {
@@ -29,8 +31,10 @@ interface ResultsDisplayProps {
   countdown: number;
   filterText: string;
   onFilterTextChange: (text: string) => void;
-  // --- NEW PROP ---
   onRetry: () => void;
+  socket: any; 
+  activeProfileName: string;
+  showDelugeColumn: boolean; // --- NEW PROP ---
 }
 
 const ITEMS_PER_PAGE = 10;
@@ -43,13 +47,19 @@ export const ResultsDisplay: React.FC<ResultsDisplayProps> = ({
   countdown,
   filterText,
   onFilterTextChange,
-  onRetry, // Destructure new prop
+  onRetry,
+  socket,
+  activeProfileName,
+  showDelugeColumn // --- NEW PROP DESTRUCTURED ---
 }) => {
   const [statusFilter, setStatusFilter] = useState<'all' | 'success' | 'failed'>('all');
   const [currentPage, setCurrentPage] = useState(1);
   
   const [selectedResult, setSelectedResult] = useState<TicketResult | null>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isLogsDialogOpen, setIsLogsDialogOpen] = useState(false);
+  const [currentLogs, setCurrentLogs] = useState<any[]>([]);
+  const [isFetchingLogs, setIsFetchingLogs] = useState(false);
 
   // --- Filter Logic ---
   const filteredResults = useMemo(() => {
@@ -89,6 +99,30 @@ export const ResultsDisplay: React.FC<ResultsDisplayProps> = ({
   const successCount = results.filter(r => r.success).length;
   const errorCount = results.filter(r => !r.success).length;
   const progressPercent = totalTickets > 0 ? (results.length / totalTickets) * 100 : 0;
+
+  // Listen for the logs coming back from the server (for the manual view button)
+  useEffect(() => {
+    if (!socket) return;
+    socket.on('ticketCommentsResult', (data: any) => {
+        setIsFetchingLogs(false);
+        if (data.success) {
+            setCurrentLogs(data.logs);
+            setIsLogsDialogOpen(true);
+        } else {
+            console.error("Failed to fetch logs:", data.error);
+        }
+    });
+    return () => { socket.off('ticketCommentsResult'); };
+  }, [socket]);
+
+  // Function to click the button and request logs
+  const handleFetchLogs = (ticketId: string) => {
+      setIsFetchingLogs(true);
+      socket.emit('getTicketLogs', { 
+          ticketId: ticketId, 
+          selectedProfileName: activeProfileName 
+      });
+  };
 
   const handleExport = () => {
     const content = filteredResults.map(r => r.email).join('\n');
@@ -144,20 +178,12 @@ export const ResultsDisplay: React.FC<ResultsDisplayProps> = ({
                             <XCircle className="h-3 w-3 mr-1" />
                             {errorCount} Errors
                         </Badge>
-                        
-                        {/* --- NEW: RETRY BUTTON IN TABLE --- */}
                         {!isProcessing && (
-                            <Button 
-                                size="sm" 
-                                variant="outline" 
-                                className="h-6 text-xs border-red-200 text-red-700 hover:bg-red-50"
-                                onClick={onRetry}
-                            >
+                            <Button size="sm" variant="outline" className="h-6 text-xs border-red-200 text-red-700 hover:bg-red-50" onClick={onRetry}>
                                 <RotateCcw className="h-3 w-3 mr-1" />
                                 Retry Failed
                             </Button>
                         )}
-                        {/* ---------------------------------- */}
                     </div>
                 )}
             </div>
@@ -186,10 +212,7 @@ export const ResultsDisplay: React.FC<ResultsDisplayProps> = ({
                 </div>
                 </div>
                 <div className="w-full bg-muted rounded-full h-2">
-                <div 
-                    className="bg-primary h-2 rounded-full transition-all duration-300"
-                    style={{ width: `${progressPercent}%` }}
-                />
+                <div className="bg-primary h-2 rounded-full transition-all duration-300" style={{ width: `${progressPercent}%` }} />
                 </div>
             </div>
             )}
@@ -198,11 +221,7 @@ export const ResultsDisplay: React.FC<ResultsDisplayProps> = ({
             {results.length > 0 && (
             <div className="space-y-4 mb-4">
                 <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-                <Tabs 
-                    value={statusFilter} 
-                    onValueChange={(v) => setStatusFilter(v as 'all' | 'success' | 'failed')}
-                    className="w-full md:w-auto"
-                >
+                <Tabs value={statusFilter} onValueChange={(v) => setStatusFilter(v as 'all' | 'success' | 'failed')} className="w-full md:w-auto">
                     <TabsList>
                     <TabsTrigger value="all">All ({results.length})</TabsTrigger>
                     <TabsTrigger value="success">Success ({successCount})</TabsTrigger>
@@ -213,12 +232,7 @@ export const ResultsDisplay: React.FC<ResultsDisplayProps> = ({
                 <div className="flex items-center gap-2 w-full md:w-auto">
                     <div className="relative flex-1 md:w-64">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                    <Input
-                        placeholder="Search emails..."
-                        value={filterText}
-                        onChange={(e) => onFilterTextChange(e.target.value)}
-                        className="pl-10 h-9"
-                    />
+                    <Input placeholder="Search emails..." value={filterText} onChange={(e) => onFilterTextChange(e.target.value)} className="pl-10 h-9" />
                     </div>
                     <Button variant="outline" size="sm" onClick={handleExport} disabled={filteredResults.length === 0}>
                     <Download className="h-4 w-4 mr-2"/>
@@ -249,6 +263,14 @@ export const ResultsDisplay: React.FC<ResultsDisplayProps> = ({
                         <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider w-24">
                             Status
                         </th>
+                        
+                        {/* --- NEW DELUGE HEADER --- */}
+                        {showDelugeColumn && (
+                             <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider w-24">
+                                Deluge Log
+                             </th>
+                        )}
+
                         <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
                             Details
                         </th>
@@ -266,12 +288,7 @@ export const ResultsDisplay: React.FC<ResultsDisplayProps> = ({
                         const rowKey = result.email || `row-${actualIndex}`;
 
                         return (
-                            <tr 
-                            key={rowKey}
-                            className={`transition-colors hover:bg-muted/30 ${
-                                result.success ? 'bg-green-50/30 dark:bg-green-900/10' : 'bg-red-50/30 dark:bg-red-900/10'
-                            }`}
-                            >
+                            <tr key={rowKey} className={`transition-colors hover:bg-muted/30 ${result.success ? 'bg-green-50/30 dark:bg-green-900/10' : 'bg-red-50/30 dark:bg-red-900/10'}`}>
                             <td className="px-4 py-2 text-sm text-center text-muted-foreground font-mono">
                                 {actualIndex}
                             </td>
@@ -291,6 +308,31 @@ export const ResultsDisplay: React.FC<ResultsDisplayProps> = ({
                                 </Badge>
                                 )}
                             </td>
+
+                            {/* --- NEW DELUGE COLUMN DATA --- */}
+                            {showDelugeColumn && (
+                                <td className="px-4 py-2">
+                                    {result.delugeStatus === 'Success' ? (
+                                        <Badge variant="outline" className="text-green-600 border-green-200 bg-green-50/50">
+                                            <CheckCircle2 className="h-3 w-3 mr-1" />
+                                            Done
+                                        </Badge>
+                                    ) : result.delugeStatus === 'Failed' ? (
+                                        <Badge variant="destructive" className="bg-red-50 text-red-600 border-red-200">
+                                            <XCircle className="h-3 w-3 mr-1" />
+                                            Failed
+                                        </Badge>
+                                    ) : result.success ? (
+                                        <Badge variant="secondary" className="bg-slate-100 text-slate-500 animate-pulse border-slate-200">
+                                            <Clock className="h-3 w-3 mr-1" />
+                                            Wait...
+                                        </Badge>
+                                    ) : (
+                                        <span className="text-muted-foreground">-</span>
+                                    )}
+                                </td>
+                            )}
+
                             <td className="px-4 py-2 text-sm text-foreground">
                                 <span className={!result.success ? "text-destructive font-medium" : "font-medium"}>
                                 {result.details || result.error}
@@ -299,15 +341,23 @@ export const ResultsDisplay: React.FC<ResultsDisplayProps> = ({
                             <td className="px-4 py-2 text-sm text-center text-muted-foreground font-mono">
                                 {formatTime(result.timestamp)}
                             </td>
-                            <td className="px-4 py-2 text-center">
-                                <Button 
-                                    variant="ghost" 
-                                    size="icon" 
-                                    className="h-7 w-7" 
-                                    onClick={() => openDetails(result)}
-                                >
+                            <td className="px-4 py-2 text-center flex justify-center space-x-1">
+                                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openDetails(result)} title="View Raw Data">
                                     <Eye className="h-4 w-4" />
                                 </Button>
+                                {/* NEW LOGS BUTTON */}
+                                {result.success && result.fullResponse?.ticketCreate?.id && (
+                                    <Button 
+                                        variant="ghost" 
+                                        size="icon" 
+                                        className="h-7 w-7 text-blue-500 hover:text-blue-700 hover:bg-blue-50" 
+                                        onClick={() => handleFetchLogs(result.fullResponse.ticketCreate.id)}
+                                        disabled={isFetchingLogs}
+                                        title="View Deluge Logs"
+                                    >
+                                        <BarChart3 className="h-4 w-4" /> 
+                                    </Button>
+                                )}
                             </td>
                             </tr>
                         );
@@ -323,45 +373,11 @@ export const ResultsDisplay: React.FC<ResultsDisplayProps> = ({
                             Showing {((currentPage - 1) * ITEMS_PER_PAGE) + 1} to {Math.min(currentPage * ITEMS_PER_PAGE, reversedFilteredResults.length)} of {reversedFilteredResults.length} entries
                         </div>
                         <div className="flex items-center space-x-2">
-                            <Button
-                                variant="outline"
-                                size="icon"
-                                className="h-8 w-8"
-                                onClick={() => setCurrentPage(1)}
-                                disabled={currentPage === 1}
-                            >
-                                <ChevronsLeft className="h-4 w-4" />
-                            </Button>
-                            <Button
-                                variant="outline"
-                                size="icon"
-                                className="h-8 w-8"
-                                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                                disabled={currentPage === 1}
-                            >
-                                <ChevronLeft className="h-4 w-4" />
-                            </Button>
-                            <div className="flex items-center justify-center text-sm font-medium w-[80px]">
-                                Page {currentPage} / {totalPages}
-                            </div>
-                            <Button
-                                variant="outline"
-                                size="icon"
-                                className="h-8 w-8"
-                                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                                disabled={currentPage === totalPages}
-                            >
-                                <ChevronRight className="h-4 w-4" />
-                            </Button>
-                            <Button
-                                variant="outline"
-                                size="icon"
-                                className="h-8 w-8"
-                                onClick={() => setCurrentPage(totalPages)}
-                                disabled={currentPage === totalPages}
-                            >
-                                <ChevronsRight className="h-4 w-4" />
-                            </Button>
+                            <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setCurrentPage(1)} disabled={currentPage === 1}><ChevronsLeft className="h-4 w-4" /></Button>
+                            <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1}><ChevronLeft className="h-4 w-4" /></Button>
+                            <div className="flex items-center justify-center text-sm font-medium w-[80px]">Page {currentPage} / {totalPages}</div>
+                            <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages}><ChevronRight className="h-4 w-4" /></Button>
+                            <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setCurrentPage(totalPages)} disabled={currentPage === totalPages}><ChevronsRight className="h-4 w-4" /></Button>
                         </div>
                     </div>
                 )}
@@ -417,7 +433,14 @@ export const ResultsDisplay: React.FC<ResultsDisplayProps> = ({
                                             {JSON.stringify(selectedResult.fullResponse.ticketCreate, null, 2)}
                                         </pre>
                                     </div>
-
+                                    {'verifyDeluge' in selectedResult.fullResponse && (
+                                        <div>
+                                            <h4 className="text-sm font-semibold mb-2 text-foreground">Deluge Execution Log</h4>
+                                            <pre className="bg-slate-950 text-green-400 p-4 rounded-lg text-xs font-mono border border-border overflow-auto">
+                                                {JSON.stringify(selectedResult.fullResponse.verifyDeluge, null, 2)}
+                                            </pre>
+                                        </div>
+                                    )}
                                     {'sendReply' in selectedResult.fullResponse && (
                                         <div>
                                             <h4 className="text-sm font-semibold mb-2 text-foreground">Send Reply Response</h4>
@@ -444,6 +467,32 @@ export const ResultsDisplay: React.FC<ResultsDisplayProps> = ({
                                 </div>
                             )}
                         </>
+                    )}
+                </div>
+            </DialogContent>
+        </Dialog>
+
+        {/* --- DELUGE LOGS DIALOG --- */}
+        <Dialog open={isLogsDialogOpen} onOpenChange={setIsLogsDialogOpen}>
+            <DialogContent className="max-w-md">
+                <DialogHeader>
+                    <DialogTitle>Deluge Execution Logs</DialogTitle>
+                    <DialogDescription>System logs retrieved from private ticket comments.</DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 max-h-[60vh] overflow-y-auto">
+                    {currentLogs.length === 0 ? (
+                        <p className="text-sm text-muted-foreground text-center py-4">
+                            No logs found for this ticket. Did the Deluge script run?
+                        </p>
+                    ) : (
+                        currentLogs.map((log, index) => (
+                            <div key={index} className="bg-slate-950 text-green-400 p-3 rounded-md text-xs font-mono border border-slate-800">
+                                <div dangerouslySetInnerHTML={{ __html: log.content }} />
+                                <div className="text-slate-500 text-[10px] mt-2 border-t border-slate-800 pt-1">
+                                    Logged at: {new Date(log.createdTime).toLocaleString()}
+                                </div>
+                            </div>
+                        ))
                     )}
                 </div>
             </DialogContent>

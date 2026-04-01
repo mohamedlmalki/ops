@@ -1,6 +1,6 @@
 // --- FILE: src/components/dashboard/ProfileModal.tsx ---
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -80,11 +80,25 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
   const { toast } = useToast();
   const [isGenerating, setIsGenerating] = useState(false);
   const [formData, setFormData] = useState<Profile>(getInitialFormData());
+  
+  // Use a ref to access the latest formData inside socket callbacks without stale closure issues
+  const formDataRef = useRef(formData);
+  useEffect(() => { formDataRef.current = formData; }, [formData]);
 
   const [isFetchingPortals, setIsFetchingPortals] = useState(false);
   const [portalList, setPortalList] = useState<Portal[]>([]);
   const [isPortalModalOpen, setIsPortalModalOpen] = useState(false);
 
+  // Auto-Fetch States for Zoho Desk
+  const [isFetchingDesk, setIsFetchingDesk] = useState(false);
+  const [deskOrgList, setDeskOrgList] = useState<any[]>([]);
+  const [isDeskOrgModalOpen, setIsDeskOrgModalOpen] = useState(false);
+  
+  const [deskDepList, setDeskDepList] = useState<any[]>([]);
+  const [isDeskDepModalOpen, setIsDeskDepModalOpen] = useState(false);
+  
+  const [deskMailList, setDeskMailList] = useState<any[]>([]);
+  const [isDeskMailModalOpen, setIsDeskMailModalOpen] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
@@ -135,7 +149,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
             const portalId = portals[0].id;
             setFormData(prev => ({ 
                 ...prev, 
-                projects: { ...prev.projects, portalId } 
+                projects: { ...(prev.projects as object), portalId } 
             }));
             toast({ title: "Success!", description: `Portal ID ${portalId} was auto-filled.` });
             return;
@@ -151,17 +165,102 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
         toast({ title: "Error Fetching Portals", description: data.message, variant: "destructive" });
     };
 
+    // --- ZOHO DESK AUTO-FETCH SOCKET HANDLERS ---
+    const handleDeskOrgsResult = (data: { success: boolean, organizations: any[] }) => {
+        if (!data.success || !data.organizations || data.organizations.length === 0) {
+            setIsFetchingDesk(false);
+            toast({ title: "No Organizations Found", description: "No Zoho Desk Orgs found.", variant: "destructive" });
+            return;
+        }
+        if (data.organizations.length === 1) {
+            const org = data.organizations[0];
+            setFormData(prev => ({ ...prev, desk: { ...(prev.desk as object), orgId: org.id.toString() } }));
+            
+            // Immediately chain the next request
+            socket.emit('getDeskDepartments', {
+                clientId: formDataRef.current.clientId,
+                clientSecret: formDataRef.current.clientSecret,
+                refreshToken: formDataRef.current.refreshToken,
+                orgId: org.id
+            });
+        } else {
+            setIsFetchingDesk(false);
+            setDeskOrgList(data.organizations);
+            setIsDeskOrgModalOpen(true);
+        }
+    };
+
+    const handleDeskDepsResult = (data: { success: boolean, departments: any[] }) => {
+        if (!data.success || !data.departments || data.departments.length === 0) {
+            setIsFetchingDesk(false);
+            toast({ title: "No Departments Found", variant: "destructive" });
+            return;
+        }
+        if (data.departments.length === 1) {
+            const dep = data.departments[0];
+            setFormData(prev => ({ ...prev, desk: { ...(prev.desk as object), defaultDepartmentId: dep.id.toString() } }));
+            
+            socket.emit('getDeskMailAddresses', {
+                clientId: formDataRef.current.clientId,
+                clientSecret: formDataRef.current.clientSecret,
+                refreshToken: formDataRef.current.refreshToken,
+                orgId: formDataRef.current.desk?.orgId || '',
+                departmentId: dep.id
+            });
+        } else {
+            setIsFetchingDesk(false);
+            setDeskDepList(data.departments);
+            setIsDeskDepModalOpen(true);
+        }
+    };
+
+    const handleDeskMailsResult = (data: { success: boolean, mailAddresses: any[] }) => {
+        setIsFetchingDesk(false);
+        if (!data.success || !data.mailAddresses || data.mailAddresses.length === 0) {
+            toast({ title: "No Mail Addresses Found", variant: "destructive" });
+            return;
+        }
+        if (data.mailAddresses.length === 1) {
+            const mail = data.mailAddresses[0];
+            setFormData(prev => ({ 
+                ...prev, 
+                desk: { ...(prev.desk as object), mailReplyAddressId: mail.id.toString(), fromEmailAddress: mail.address } 
+            }));
+            toast({ title: "Desk Auto-Fetch Complete!", description: "All settings automatically populated." });
+        } else {
+            setDeskMailList(data.mailAddresses);
+            setIsDeskMailModalOpen(true);
+        }
+    };
+
+    const handleDeskError = (data: { message: string }) => {
+        setIsFetchingDesk(false);
+        toast({ title: "Desk Fetch Error", description: data.message, variant: "destructive" });
+    };
 
     socket.on('zoho-refresh-token', handleTokenReceived);
     socket.on('zoho-refresh-token-error', handleTokenError);
     socket.on('projectsPortalsResult', handlePortalsResult);
     socket.on('projectsPortalsError', handlePortalsError);
+    
+    socket.on('deskOrganizationsResult', handleDeskOrgsResult);
+    socket.on('deskDepartmentsResult', handleDeskDepsResult);
+    socket.on('deskMailAddressesResult', handleDeskMailsResult);
+    socket.on('deskOrganizationsError', handleDeskError);
+    socket.on('deskDepartmentsError', handleDeskError);
+    socket.on('deskMailAddressesError', handleDeskError);
 
     return () => {
       socket.off('zoho-refresh-token', handleTokenReceived);
       socket.off('zoho-refresh-token-error', handleTokenError);
       socket.off('projectsPortalsResult', handlePortalsResult);
       socket.off('projectsPortalsError', handlePortalsError);
+      socket.off('deskOrganizationsResult', handleDeskOrgsResult);
+      socket.off('deskDepartmentsResult', handleDeskDepsResult);
+      socket.off('deskMailAddressesResult', handleDeskMailsResult);
+      socket.off('deskOrganizationsError', handleDeskError);
+      socket.off('deskDepartmentsError', handleDeskError);
+      socket.off('deskMailAddressesError', handleDeskError);
     };
   }, [socket, isOpen, toast]);
 
@@ -255,6 +354,19 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
     });
   };
 
+  const handleFetchDesk = () => {
+    if (!formData.clientId || !formData.clientSecret || !formData.refreshToken) {
+        toast({ title: "Missing Credentials", description: "Generate a Refresh Token first.", variant: "destructive" });
+        return;
+    }
+    setIsFetchingDesk(true);
+    socket?.emit('getDeskOrganizations', {
+        clientId: formData.clientId,
+        clientSecret: formData.clientSecret,
+        refreshToken: formData.refreshToken
+    });
+  };
+
   return (
     <>
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -301,9 +413,15 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
             <div className="space-y-6">
               {/* --- ZOHO DESK SETTINGS --- */}
               <div>
-                <h4 className="text-sm font-semibold mb-4 flex items-center">
-                  <Building className="h-4 w-4 mr-2" />
-                  Zoho Desk Settings
+                <h4 className="text-sm font-semibold mb-4 flex items-center justify-between">
+                  <span className="flex items-center">
+                    <Building className="h-4 w-4 mr-2" />
+                    Zoho Desk Settings
+                  </span>
+                  <Button type="button" variant="outline" size="sm" onClick={handleFetchDesk} disabled={isFetchingDesk}>
+                      {isFetchingDesk ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Search className="h-3 w-3 mr-1" />}
+                      Auto Fetch
+                  </Button>
                 </h4>
                 <div className="grid gap-4 pl-4 border-l-2 ml-2">
                     <div className="grid grid-cols-4 items-center gap-4">
@@ -499,10 +617,71 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
             setIsPortalModalOpen(false);
         }}
     />
+
+    {/* ZOHO DESK SELECTOR MODALS */}
+    <GenericSelectorModal
+        isOpen={isDeskOrgModalOpen}
+        onClose={() => setIsDeskOrgModalOpen(false)}
+        title="Select Zoho Desk Organization"
+        description="Multiple organizations found. Please select one."
+        items={deskOrgList}
+        displayKey="companyName"
+        onSelect={(org) => {
+            setFormData(prev => ({ ...prev, desk: { ...(prev.desk as object), orgId: org.id.toString() } }));
+            setIsDeskOrgModalOpen(false);
+            setIsFetchingDesk(true);
+            socket?.emit('getDeskDepartments', {
+                clientId: formDataRef.current.clientId,
+                clientSecret: formDataRef.current.clientSecret,
+                refreshToken: formDataRef.current.refreshToken,
+                orgId: org.id
+            });
+        }}
+    />
+
+    <GenericSelectorModal
+        isOpen={isDeskDepModalOpen}
+        onClose={() => setIsDeskDepModalOpen(false)}
+        title="Select Default Department"
+        description="Please select a default department for tickets."
+        items={deskDepList}
+        displayKey="name"
+        onSelect={(dep) => {
+            setFormData(prev => ({ ...prev, desk: { ...(prev.desk as object), defaultDepartmentId: dep.id.toString() } }));
+            setIsDeskDepModalOpen(false);
+            setIsFetchingDesk(true);
+            socket?.emit('getDeskMailAddresses', {
+                clientId: formDataRef.current.clientId,
+                clientSecret: formDataRef.current.clientSecret,
+                refreshToken: formDataRef.current.refreshToken,
+                orgId: formDataRef.current.desk?.orgId || '',
+                departmentId: dep.id
+            });
+        }}
+    />
+
+    <GenericSelectorModal
+        isOpen={isDeskMailModalOpen}
+        onClose={() => setIsDeskMailModalOpen(false)}
+        title="Select Send/Reply Address"
+        description="Please select the mail address to use as Sender."
+        items={deskMailList}
+        displayKey="address"
+        onSelect={(mail) => {
+            setFormData(prev => ({ 
+                ...prev, 
+                desk: { ...(prev.desk as object), mailReplyAddressId: mail.id.toString(), fromEmailAddress: mail.address } 
+            }));
+            setIsDeskMailModalOpen(false);
+            toast({ title: "Success!", description: "Zoho Desk details filled successfully." });
+        }}
+    />
     </>
   );
 };
 
+
+// REUSABLE COMPONENTS
 
 interface PortalSelectorModalProps {
     isOpen: boolean;
@@ -539,6 +718,46 @@ const PortalSelectorModal: React.FC<PortalSelectorModalProps> = ({ isOpen, onClo
                     <Button type="button" variant="outline" onClick={onClose}>
                         Cancel
                     </Button>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
+    );
+};
+
+interface GenericSelectorModalProps {
+    isOpen: boolean;
+    title: string;
+    description: string;
+    items: any[];
+    displayKey: string;
+    onSelect: (item: any) => void;
+    onClose: () => void;
+}
+
+const GenericSelectorModal: React.FC<GenericSelectorModalProps> = ({ isOpen, onClose, title, description, items, displayKey, onSelect }) => {
+    return (
+        <Dialog open={isOpen} onOpenChange={onClose}>
+            <DialogContent className="sm:max-w-md">
+                <DialogHeader>
+                    <DialogTitle>{title}</DialogTitle>
+                    <DialogDescription>{description}</DialogDescription>
+                </DialogHeader>
+                <ScrollArea className="max-h-60">
+                    <div className="space-y-2 p-1">
+                        {items.map((item, idx) => (
+                            <Button
+                                key={item.id || idx}
+                                variant="ghost"
+                                className="w-full justify-start"
+                                onClick={() => onSelect(item)}
+                            >
+                                {item[displayKey] || `Item ${item.id}`}
+                            </Button>
+                        ))}
+                    </div>
+                </ScrollArea>
+                <DialogFooter>
+                    <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
                 </DialogFooter>
             </DialogContent>
         </Dialog>

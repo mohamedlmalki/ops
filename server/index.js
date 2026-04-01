@@ -478,6 +478,17 @@ io.on('connection', (socket) => {
         console.log(`[INFO] Socket disconnected: ${socket.id}. Jobs will remain active in background.`);
     });
 
+    // Desk Auto-Fetch API Handlers
+    socket.on('getDeskOrganizations', (data) => {
+        deskHandler.handleGetDeskOrganizations(socket, data);
+    });
+    socket.on('getDeskDepartments', (data) => {
+        deskHandler.handleGetDeskDepartments(socket, data);
+    });
+    socket.on('getDeskMailAddresses', (data) => {
+        deskHandler.handleGetDeskMailAddresses(socket, data);
+    });
+
     socket.on('getProjectsPortals', (data) => {
         projectsHandler.handleGetPortals(socket, data);
     });

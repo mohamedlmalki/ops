@@ -12,8 +12,9 @@ import {
     Send, Eye, Mail, Clock, MessageSquare, Users, Pause, Play, Square, 
     Bot, Upload, Edit, RefreshCw, Trash2, MailWarning, CheckCircle2, 
     XCircle, ImagePlus, Timer, AlertTriangle, RotateCcw, Save, FileDown, Sparkles 
-} from 'lucide-react'; // Added Save, FileDown, Sparkles
+} from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Switch } from '@/components/ui/switch'; // --- IMPORT SWITCH ---
 import { useToast } from '@/hooks/use-toast';
 import { Socket } from 'socket.io-client';
 import { Profile, JobState } from '@/App';
@@ -27,6 +28,7 @@ interface TicketFormData {
   delay: number;
   sendDirectReply: boolean;
   verifyEmail: boolean;
+  verifyDelugeLog: boolean; // --- NEW FIELD ---
   displayName: string;
   stopAfterFailures: number; 
 }
@@ -37,7 +39,8 @@ interface TicketFormProps {
   isPaused: boolean;
   onPauseResume: () => void;
   onEndJob: () => void;
-  onSendTest: (data: { email: string, subject: string, description: string, sendDirectReply: boolean, verifyEmail: boolean }) => void;
+  // --- UPDATED ONSENDTEST ---
+  onSendTest: (data: { email: string, subject: string, description: string, sendDirectReply: boolean, verifyEmail: boolean, verifyDelugeLog: boolean }) => void;
   formData: TicketFormData;
   onFormDataChange: (data: TicketFormData) => void;
   socket: Socket | null;
@@ -49,7 +52,7 @@ interface TicketFormProps {
   failedCount: number;
 }
 
-// --- NEW: Template Interface ---
+// --- Template Interface ---
 interface SavedTemplate {
     name: string;
     subject: string;
@@ -57,7 +60,6 @@ interface SavedTemplate {
 }
 
 const ImageToolDialog = ({ onApply }: { onApply: (html: string) => void }) => {
-    // ... (Keep existing ImageToolDialog code exactly as is)
     const [imageUrl, setImageUrl] = useState('');
     const [altText, setAltText] = useState('');
     const [linkUrl, setLinkUrl] = useState('');
@@ -90,7 +92,7 @@ export const TicketForm: React.FC<TicketFormProps> = ({
   const { toast } = useToast();
   const [isLoadingName, setIsLoadingName] = useState(false);
   
-  // --- NEW: Template State ---
+  // --- Template State ---
   const [templates, setTemplates] = useState<SavedTemplate[]>([]);
   const [templateName, setTemplateName] = useState('');
 
@@ -130,7 +132,7 @@ export const TicketForm: React.FC<TicketFormProps> = ({
       toast({ title: "Template Deleted" });
   };
 
-  // --- NEW: Smart Cleaner Logic ---
+  // --- Smart Cleaner Logic ---
   const handleCleanEmails = () => {
       if (!formData.emails) return;
       
@@ -157,7 +159,6 @@ export const TicketForm: React.FC<TicketFormProps> = ({
       toast({ title: "List Cleaned", description: `Removed duplicates & formatting. ${count} valid emails remain (was ${originalCount}).` });
   };
 
-  // ... (Existing Name Fetching Logic) ...
   const fetchDisplayName = () => {
       if (selectedProfile?.desk?.mailReplyAddressId && socket) {
           setIsLoadingName(true);
@@ -192,12 +193,27 @@ export const TicketForm: React.FC<TicketFormProps> = ({
 
   const emailCount = useMemo(() => formData.emails.split('\n').filter(email => email.trim() !== '').length, [formData.emails]);
   const handleSubmit = (e: React.FormEvent) => { e.preventDefault(); onSubmit(); };
-  const handleInputChange = (field: keyof Omit<TicketFormData, 'sendDirectReply' | 'verifyEmail'>, value: string | number) => { onFormDataChange({ ...formData, [field]: value }); };
-  const handleCheckboxChange = (field: 'sendDirectReply' | 'verifyEmail', checked: boolean) => { onFormDataChange({ ...formData, [field]: checked }); }
+  
+  // Ensure we omit verifyDelugeLog from the simple input handler so TypeScript doesn't complain
+  const handleInputChange = (field: keyof Omit<TicketFormData, 'sendDirectReply' | 'verifyEmail' | 'verifyDelugeLog'>, value: string | number) => { 
+      onFormDataChange({ ...formData, [field]: value }); 
+  };
+  
+  const handleCheckboxChange = (field: 'sendDirectReply' | 'verifyEmail', checked: boolean) => { 
+      onFormDataChange({ ...formData, [field]: checked }); 
+  };
 
   const handleTestClick = () => {
     if (!testEmail) { alert("Please enter an email address for the test ticket."); return; }
-    onSendTest({ email: testEmail, subject: formData.subject, description: formData.description, sendDirectReply: formData.sendDirectReply, verifyEmail: formData.verifyEmail });
+    // --- UPDATED ONSENDTEST CALL ---
+    onSendTest({ 
+        email: testEmail, 
+        subject: formData.subject, 
+        description: formData.description, 
+        sendDirectReply: formData.sendDirectReply, 
+        verifyEmail: formData.verifyEmail,
+        verifyDelugeLog: formData.verifyDelugeLog 
+    });
   };
 
   const handleFileImport = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -266,7 +282,7 @@ export const TicketForm: React.FC<TicketFormProps> = ({
                     <span>Recipient Emails</span>
                   </Label>
                   <div className='flex items-center space-x-2'>
-                    {/* --- NEW: Clean Button --- */}
+                    {/* --- Clean Button --- */}
                     <Button 
                         type="button" 
                         variant="ghost" 
@@ -302,7 +318,6 @@ export const TicketForm: React.FC<TicketFormProps> = ({
                   disabled={isProcessing}
                 />
                 
-                {/* ... (Status Grid - Unchanged) ... */}
                 {jobState && (jobState.isProcessing || jobState.results.length > 0) && (
                     <div className="pt-4 border-t border-dashed">
                         <div className="grid grid-cols-4 gap-4 text-center">
@@ -314,7 +329,6 @@ export const TicketForm: React.FC<TicketFormProps> = ({
                     </div>
                 )}
 
-                {/* ... (Test Ticket Section - Unchanged) ... */}
                 <div className="pt-4 border-t border-dashed">
                     <Label htmlFor="test-email" className="text-xs text-muted-foreground">Send a single test ticket</Label>
                     <div className="flex items-center space-x-2 mt-2">
@@ -326,7 +340,7 @@ export const TicketForm: React.FC<TicketFormProps> = ({
             </div>
 
             <div className="space-y-4">
-              {/* --- NEW: Template Manager --- */}
+              {/* --- Template Manager --- */}
               <div className="p-3 bg-muted/20 rounded-lg border border-dashed border-border mb-4">
                   <div className="flex items-center justify-between mb-2">
                       <Label className="text-xs font-semibold text-muted-foreground flex items-center">
@@ -396,6 +410,7 @@ export const TicketForm: React.FC<TicketFormProps> = ({
                   </div>
               </div>
 
+              {/* --- UPDATED: Optional Email Actions --- */}
               <div className="space-y-2 pt-2">
                   <Label className="flex items-center space-x-2"><Bot className="h-4 w-4" /><span>Optional Email Actions</span></Label>
                   <div className="space-y-3 rounded-lg bg-muted/30 p-4 border border-border">
@@ -407,6 +422,23 @@ export const TicketForm: React.FC<TicketFormProps> = ({
                         <Checkbox id="verifyEmail" checked={formData.verifyEmail} onCheckedChange={(checked) => handleCheckboxChange('verifyEmail', !!checked)} disabled={isProcessing || formData.sendDirectReply} />
                         <div className="grid gap-1.5 leading-none"><Label htmlFor="verifyEmail" className="font-medium hover:cursor-pointer">Verify Automation Email</Label><p className="text-xs text-muted-foreground">Slower. Checks if automation was triggered.</p></div>
                     </div>
+                  </div>
+                  
+                  {/* --- NEW: Deluge Verification Switch --- */}
+                  <div className="flex flex-row items-center justify-between rounded-lg border p-4 bg-muted/10 mt-2">
+                      <div className="space-y-0.5">
+                          <Label className="text-sm font-medium flex items-center">
+                              <Sparkles className="h-3 w-3 mr-1 text-green-500" /> Verify Deluge Log
+                          </Label>
+                          <p className="text-xs text-muted-foreground">
+                              Checks if your custom function executed and successfully wrote the log comment.
+                          </p>
+                      </div>
+                      <Switch
+                          checked={formData.verifyDelugeLog}
+                          onCheckedChange={(checked) => onFormDataChange({ ...formData, verifyDelugeLog: checked })}
+                          disabled={isProcessing}
+                      />
                   </div>
               </div>
 
