@@ -648,7 +648,7 @@ const createInitialBookingJobState = (): BookingJobState => ({
 });
 
 
-// 🔥 THE GOD MODE CACHE HOOK: Instantly saves the tables, forms, and progress of ALL modules
+// 🔥 THE GOD MODE CACHE HOOK
 function usePersistentJobs<T>(storageKey: string, initialValue: T) {
     const [state, setState] = useState<T>(() => {
         try {
@@ -658,8 +658,6 @@ function usePersistentJobs<T>(storageKey: string, initialValue: T) {
                 const safeState: any = {};
                 for (const profile in parsed) {
                     const job = parsed[profile];
-                    // If the page was hard-refreshed while processing, smart-pause it
-                    // so the user's data table and results are perfectly maintained!
                     const wasActive = job.isProcessing && !job.isPaused;
                     safeState[profile] = {
                         ...job,
@@ -686,11 +684,10 @@ function usePersistentJobs<T>(storageKey: string, initialValue: T) {
     return [state, setState] as const;
 }
 
-
 const MainApp = () => {
     const { toast } = useToast();
     
-    // 🔥 UPGRADED STATE SYSTEM: Everything is now completely crash-proof
+    // 🔥 STATE SYSTEM
     const [jobs, setJobs] = usePersistentJobs<Jobs>('zoho_cache_jobs_ticket', {});
     const [invoiceJobs, setInvoiceJobs] = usePersistentJobs<InvoiceJobs>('zoho_cache_jobs_invoice', {});
     const [catalystJobs, setCatalystJobs] = usePersistentJobs<CatalystJobs>('zoho_cache_jobs_catalyst', {}); 
@@ -727,6 +724,44 @@ const MainApp = () => {
 
         socket.on('connect', () => {
             toast({ title: "Connected to server!" });
+            
+            // 🔥 FIX: Check server immediately on connection to prevent locked caches!
+            socket.emit('requestActiveJobs');
+        });
+
+        // 🔥 FIX: Clean up any front-end jobs that the server doesn't know about anymore (e.g. PC Rebooted)
+        socket.on('activeJobsSync', (serverActiveJobs: string[]) => {
+            const cleanupStuckJobs = (jobsObj: any, setJobsFn: any, jobType: string) => {
+                let hasChanges = false;
+                const safeState = { ...jobsObj };
+
+                for (const profile in safeState) {
+                    const job = safeState[profile];
+                    const expectedJobId = `${profile}_${jobType}`;
+                    
+                    if ((job.isProcessing || job.isPaused) && !serverActiveJobs.includes(expectedJobId)) {
+                        safeState[profile] = {
+                            ...job,
+                            isProcessing: false,
+                            isPaused: false,
+                        };
+                        hasChanges = true;
+                    }
+                }
+                if (hasChanges) setJobsFn(safeState);
+            };
+
+            cleanupStuckJobs(jobs, setJobs, 'ticket');
+            cleanupStuckJobs(invoiceJobs, setInvoiceJobs, 'invoice');
+            cleanupStuckJobs(catalystJobs, setCatalystJobs, 'catalyst');
+            cleanupStuckJobs(emailJobs, setEmailJobs, 'email');
+            cleanupStuckJobs(qntrlJobs, setQntrlJobs, 'qntrl');
+            cleanupStuckJobs(peopleJobs, setPeopleJobs, 'people');
+            cleanupStuckJobs(creatorJobs, setCreatorJobs, 'creator');
+            cleanupStuckJobs(projectsJobs, setProjectsJobs, 'projects');
+            cleanupStuckJobs(webinarJobs, setWebinarJobs, 'webinar');
+            cleanupStuckJobs(fsmContactJobs, setFsmContactJobs, 'fsm-contact');
+            cleanupStuckJobs(bookingJobs, setBookingJobs, 'bookings');
         });
         
         socket.on('ticketResult', (result: TicketResult & { profileName: string }) => {
@@ -1042,7 +1077,6 @@ const MainApp = () => {
         }
     };
 
-
     return (
         <>
             <BrowserRouter>
@@ -1070,6 +1104,19 @@ const MainApp = () => {
                 </Routes>
             </BrowserRouter>
             <ProfileModal isOpen={isProfileModalOpen} onClose={() => setIsProfileModalOpen(false)} onSave={handleSaveProfile} profile={editingProfile} socket={socketRef.current} />
+
+            {/* 🔥 FIX: Emergency escape hatch button for stuck caches */}
+            <button 
+                onClick={() => {
+                    if (window.confirm("WARNING: Clear all stuck job caches? (Use if accounts are locked out)")) {
+                        localStorage.clear();
+                        window.location.reload();
+                    }
+                }}
+                className="fixed bottom-2 right-2 text-[10px] bg-red-100 text-red-800 px-2 py-1 rounded opacity-30 hover:opacity-100 z-[9999] transition-opacity"
+            >
+                Fix Stuck Cache
+            </button>
         </>
     );
 };

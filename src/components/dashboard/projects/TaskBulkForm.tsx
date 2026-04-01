@@ -232,15 +232,9 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
 
   const stopAfterFailures = (jobState.formData as any).stopAfterFailures || 4;
 
+  // 🔥 FIX: Trust App.tsx cache entirely and remove conflicting manual localStorage saves
   const handleFormDataChange = useCallback((field: keyof ProjectsFormData | 'stopAfterFailures', value: any) => {
     if (!selectedProfileName) return;
-
-    if (field !== 'bulkDefaultData') {
-        const cacheKey = `zoho_projects_general_cache_${selectedProfileName}`;
-        const existingCache = JSON.parse(localStorage.getItem(cacheKey) || '{}');
-        existingCache[field] = value;
-        localStorage.setItem(cacheKey, JSON.stringify(existingCache));
-    }
 
     setJobs((prev) => {
       const prevJobState = prev[selectedProfileName] || jobState;
@@ -257,56 +251,7 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
     });
   }, [selectedProfileName, setJobs, jobState]); 
 
-  useEffect(() => {
-    if (selectedProfileName) {
-        const cacheKey = `zoho_projects_general_cache_${selectedProfileName}`;
-        const cachedData = localStorage.getItem(cacheKey);
-        
-        if (cachedData) {
-            try {
-                const parsed = JSON.parse(cachedData);
-                setJobs((prev) => {
-                    const currentJob = prev[selectedProfileName] || jobState;
-                    return {
-                        ...prev,
-                        [selectedProfileName]: {
-                            ...currentJob,
-                            formData: {
-                                ...currentJob.formData,
-                                delay: parsed.delay ?? currentJob.formData.delay,
-                                stopAfterFailures: parsed.stopAfterFailures ?? currentJob.formData.stopAfterFailures,
-                                projectId: parsed.projectId ?? currentJob.formData.projectId,
-                                primaryField: parsed.primaryField ?? currentJob.formData.primaryField,
-                                primaryValues: parsed.primaryValues ?? currentJob.formData.primaryValues
-                            }
-                        }
-                    };
-                });
-            } catch (e) {
-                console.error("Failed to parse cached general form data", e);
-            }
-        }
-    }
-  }, [selectedProfileName, setJobs]);
-
-  useEffect(() => {
-    if (selectedProfileName && jobState.formData.projectId) {
-      const cacheKey = `zoho_custom_fields_${selectedProfileName}_${jobState.formData.projectId}`;
-      const cachedFields = localStorage.getItem(cacheKey);
-      
-      if (cachedFields) {
-        try {
-          const parsed = JSON.parse(cachedFields);
-          handleFormDataChange('bulkDefaultData', parsed || {});
-        } catch (e) {
-          console.error("Failed to parse cached fields", e);
-        }
-      } else {
-        handleFormDataChange('bulkDefaultData', {});
-      }
-    }
-  }, [selectedProfileName, jobState.formData.projectId, handleFormDataChange]);
-
+  // 🔥 FIX: Trust App.tsx cache entirely for dynamic fields
   const handleDynamicFieldChange = useCallback((columnName: string, value: string) => {
     if (!selectedProfileName) return;
     setJobs((prev) => {
@@ -315,12 +260,6 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
         ...prevJobState.formData.bulkDefaultData,
         [columnName]: value,
       };
-      
-      const currentProjectId = prevJobState.formData.projectId;
-      if (currentProjectId) {
-          const cacheKey = `zoho_custom_fields_${selectedProfileName}_${currentProjectId}`;
-          localStorage.setItem(cacheKey, JSON.stringify(newBulkData));
-      }
       
       return {
         ...prev,
@@ -336,9 +275,6 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
   }, [selectedProfileName, setJobs, jobState]); 
 
   const handleClearCustomFields = () => {
-    if (!selectedProfileName || !jobState.formData.projectId) return;
-    const cacheKey = `zoho_custom_fields_${selectedProfileName}_${jobState.formData.projectId}`;
-    localStorage.removeItem(cacheKey);
     handleFormDataChange('bulkDefaultData', {});
     toast({ title: "Fields Cleared", description: "Wiped custom fields for this project." });
   };

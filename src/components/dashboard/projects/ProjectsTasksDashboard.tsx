@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Socket } from 'socket.io-client';
+import { useLocation } from 'react-router-dom'; // 🔥 ADDED: For Live Stats redirect
 import { DashboardLayout } from '../DashboardLayout';
 import { useToast } from '@/hooks/use-toast';
 import { Profile } from '@/App';
@@ -67,8 +68,14 @@ export const ProjectsTasksDashboard: React.FC<ProjectsTasksDashboardProps> = ({
     socket, onAddProfile, onEditProfile, onDeleteProfile, jobs, setJobs, createInitialJobState, title, jobType, description,
 }) => {
   const { toast } = useToast();
-  const [activeProfileName, setActiveProfileName] = useState<string | null>(null);
+  const location = useLocation(); // 🔥 ADDED
+  const redirectProcessed = useRef(false); // 🔥 ADDED
   
+  // 🔥 FIX: Remember the last selected profile using localStorage
+  const [activeProfileName, setActiveProfileName] = useState<string | null>(() => {
+      return localStorage.getItem('zoho_projects_last_profile') || null;
+  });
+
   const [apiStatus, setApiStatus] = useState<ApiStatus>({ status: 'loading', message: 'Connecting to server...', fullResponse: null });
   const [isStatusModalOpen, setIsStatusModalOpen] = useState(false);
   
@@ -98,6 +105,13 @@ export const ProjectsTasksDashboard: React.FC<ProjectsTasksDashboardProps> = ({
   useEffect(() => { globalMemoryCache.selectedTaskIds = selectedTaskIds; }, [selectedTaskIds]);
   // --------------------------------
 
+  // 🔥 FIX: Update localStorage whenever the profile changes
+  useEffect(() => {
+      if (activeProfileName) {
+          localStorage.setItem('zoho_projects_last_profile', activeProfileName);
+      }
+  }, [activeProfileName]);
+
   const { data: profiles = [] } = useQuery<Profile[]>({
     queryKey: ['profiles'],
     queryFn: async () => {
@@ -109,11 +123,25 @@ export const ProjectsTasksDashboard: React.FC<ProjectsTasksDashboardProps> = ({
   
   const projectsProfiles = useMemo(() => profiles.filter(p => p.projects?.portalId), [profiles]);
 
+  // 🔥 FIX: Smart Profile Selection (Handles Live Stats clicks AND cache memory)
   useEffect(() => {
-    if (projectsProfiles.length > 0 && !activeProfileName) {
+    if (projectsProfiles.length === 0) return;
+
+    // Check if we are coming from Live Stats
+    if (!redirectProcessed.current && location.state?.targetProfile) {
+        const target = projectsProfiles.find(p => p.profileName === location.state.targetProfile);
+        if (target) {
+            setActiveProfileName(target.profileName);
+            redirectProcessed.current = true;
+            return;
+        }
+    }
+
+    // Fallback: If no valid profile is selected (or the cached one was deleted), select the first one
+    if (!activeProfileName || !projectsProfiles.find(p => p.profileName === activeProfileName)) {
       setActiveProfileName(projectsProfiles[0].profileName);
     }
-  }, [projectsProfiles, activeProfileName]);
+  }, [projectsProfiles, activeProfileName, location.state]);
   
   const selectedProfile = projectsProfiles.find(p => p.profileName === activeProfileName) || null;
   const jobState = jobs[activeProfileName || ''] || createInitialJobState();

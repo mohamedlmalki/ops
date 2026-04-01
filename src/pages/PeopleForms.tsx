@@ -174,24 +174,24 @@ const DynamicFormField = ({ field, value, onChange, isBulk = false, disabled = f
     }
 }
 
-
 const PeopleForms: React.FC<PeopleFormsProps> = (props) => {
   const location = useLocation(); 
-  const [activeProfileName, setActiveProfileName] = useState<string | null>(null);
-  const [apiStatus, setApiStatus] = useState<ApiStatus>({ status: 'loading', message: 'Checking...' });
   const { toast } = useToast(); 
+  const redirectProcessed = useRef(false);
+
+  const [activeProfileName, setActiveProfileName] = useState<string | null>(() => {
+      return localStorage.getItem('zoho_people_last_profile') || null;
+  });
+
+  const [apiStatus, setApiStatus] = useState<ApiStatus>({ status: 'loading', message: 'Checking...' });
   const [isStatusModalOpen, setIsStatusModalOpen] = useState(false);
-  
   const [forms, setForms] = useState<PeopleForm[]>([]);
   const [isLoadingForms, setIsLoadingForms] = useState(false);
-  
   const [components, setComponents] = useState<FormComponent[]>([]);
   const [isLoadingComponents, setIsLoadingComponents] = useState(false);
   const [singleFormData, setSingleFormData] = useState<{ [key: string]: string }>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
-  
   const [showCustomOnly, setShowCustomOnly] = useState(true);
-  const redirectProcessed = useRef(false);
 
   const { jobs, setJobs, createInitialJobState } = props;
 
@@ -203,6 +203,12 @@ const PeopleForms: React.FC<PeopleFormsProps> = (props) => {
   const peopleProfiles = useMemo(() => {
     return profiles.filter(p => p.people && p.people.orgId);
   }, [profiles]);
+
+  useEffect(() => {
+      if (activeProfileName) {
+          localStorage.setItem('zoho_people_last_profile', activeProfileName);
+      }
+  }, [activeProfileName]);
 
   const selectedProfile = peopleProfiles.find(p => p.profileName === activeProfileName) || null;
 
@@ -223,67 +229,6 @@ const PeopleForms: React.FC<PeopleFormsProps> = (props) => {
   } = formData;
 
   const stopAfterFailures = (formData as any).stopAfterFailures;
-
-  useEffect(() => {
-      if (activeProfileName) {
-          const cacheKey = `zoho_people_general_cache_${activeProfileName}`;
-          const cachedDataStr = localStorage.getItem(cacheKey);
-          
-          if (cachedDataStr) {
-              try {
-                  const parsed = JSON.parse(cachedDataStr);
-                  setJobs(prev => {
-                      const currentJob = prev[activeProfileName] || createInitialJobState();
-                      return {
-                          ...prev,
-                          [activeProfileName]: {
-                              ...currentJob,
-                              formData: {
-                                  ...currentJob.formData,
-                                  selectedFormId: parsed.selectedFormId ?? currentJob.formData.selectedFormId,
-                                  bulkPrimaryField: parsed.bulkPrimaryField ?? currentJob.formData.bulkPrimaryField,
-                                  bulkPrimaryValues: parsed.bulkPrimaryValues ?? currentJob.formData.bulkPrimaryValues,
-                                  bulkDelay: parsed.bulkDelay ?? currentJob.formData.bulkDelay,
-                                  stopAfterFailures: parsed.stopAfterFailures ?? 4 
-                              }
-                          }
-                      };
-                  });
-              } catch(e) {
-                  console.error("Failed to parse cached people form data", e);
-              }
-          } else {
-              setJobs(prev => {
-                  const currentJob = prev[activeProfileName] || createInitialJobState();
-                  return {
-                      ...prev,
-                      [activeProfileName]: { ...currentJob, formData: { ...currentJob.formData, stopAfterFailures: 4 } }
-                  };
-              });
-          }
-      }
-  }, [activeProfileName, setJobs, createInitialJobState]);
-
-  useEffect(() => {
-      if (activeProfileName && selectedFormId) {
-          const cacheKey = `zoho_people_bulk_defaults_${activeProfileName}_${selectedFormId}`;
-          const cachedStr = localStorage.getItem(cacheKey);
-          if (cachedStr) {
-              try {
-                  const parsed = JSON.parse(cachedStr);
-                  setJobs(prev => {
-                    const currentJob = prev[activeProfileName] || createInitialJobState();
-                    return { ...prev, [activeProfileName]: { ...currentJob, formData: { ...currentJob.formData, bulkDefaultData: parsed || {} } } };
-                  });
-              } catch(e) {}
-          } else {
-              setJobs(prev => {
-                const currentJob = prev[activeProfileName] || createInitialJobState();
-                return { ...prev, [activeProfileName]: { ...currentJob, formData: { ...currentJob.formData, bulkDefaultData: {} } } };
-              });
-          }
-      }
-  }, [activeProfileName, selectedFormId, setJobs, createInitialJobState]);
 
   useEffect(() => {
       if (activeProfileName && selectedFormId) {
@@ -331,7 +276,7 @@ const PeopleForms: React.FC<PeopleFormsProps> = (props) => {
         }
     }
 
-    if (!activeProfileName) {
+    if (!activeProfileName || !peopleProfiles.find(p => p.profileName === activeProfileName)) {
       setActiveProfileName(peopleProfiles[0].profileName);
     }
   }, [peopleProfiles, activeProfileName, location.state]);
@@ -431,7 +376,6 @@ const PeopleForms: React.FC<PeopleFormsProps> = (props) => {
     };
   }, [props.socket, toast, setJobs, activeProfileName, selectedFormId]);
 
-  // 🔥 THE "GOD MODE" SMART SESSION RECOVERY LISTENER 🔥
   useEffect(() => {
       if (!props.socket || !selectedProfile || !selectedForm) return;
       
@@ -490,23 +434,22 @@ const PeopleForms: React.FC<PeopleFormsProps> = (props) => {
     }
   }, [selectedForm, props.socket, selectedProfile]);
   
-
   const handleFormStateChange = useCallback((field: keyof PeopleFormData, value: any) => {
     if (activeProfileName) {
-      if (field !== 'bulkDefaultData') {
-          const cacheKey = `zoho_people_general_cache_${activeProfileName}`;
-          const cachedData = JSON.parse(localStorage.getItem(cacheKey) || '{}');
-          cachedData[field] = value;
-          localStorage.setItem(cacheKey, JSON.stringify(cachedData));
-      }
-
       setJobs(prev => {
         const currentJob = prev[activeProfileName] || createInitialJobState();
+        const newFormData = { ...currentJob.formData, [field]: value };
+        
+        if (field === 'selectedFormId' && value !== currentJob.formData.selectedFormId) {
+            newFormData.bulkDefaultData = {};
+            newFormData.bulkPrimaryField = '';
+        }
+
         return {
           ...prev,
           [activeProfileName]: {
             ...currentJob,
-            formData: { ...currentJob.formData, [field]: value }
+            formData: newFormData
           }
         };
       });
@@ -539,7 +482,6 @@ const PeopleForms: React.FC<PeopleFormsProps> = (props) => {
     }
   }, [autoEmailField, formFields, activeJob.isProcessing, isLoadingComponents, components.length, bulkPrimaryField, handleFormStateChange]);
 
-
   const handleManualVerify = (service: string = 'people') => {
     if (props.socket && selectedProfile) {
       setApiStatus({ status: 'loading', message: 'Verifying...' });
@@ -558,8 +500,12 @@ const PeopleForms: React.FC<PeopleFormsProps> = (props) => {
       setSingleFormData(prev => {
           const newData = { ...prev, [labelname]: value };
           if (activeProfileName && selectedFormId) {
-              const cacheKey = `zoho_people_single_${activeProfileName}_${selectedFormId}`;
-              localStorage.setItem(cacheKey, JSON.stringify(newData));
+              try {
+                  const cacheKey = `zoho_people_single_${activeProfileName}_${selectedFormId}`;
+                  localStorage.setItem(cacheKey, JSON.stringify(newData));
+              } catch (e) {
+                  // Safety net
+              }
           }
           return newData;
       });
@@ -583,18 +529,16 @@ const PeopleForms: React.FC<PeopleFormsProps> = (props) => {
     if (activeProfileName && selectedFormId) {
       setJobs(prev => {
         const currentJob = prev[activeProfileName] || createInitialJobState();
-        const newBulkData = { ...currentJob.formData.bulkDefaultData, [labelname]: value };
-
-        const cacheKey = `zoho_people_bulk_defaults_${activeProfileName}_${selectedFormId}`;
-        localStorage.setItem(cacheKey, JSON.stringify(newBulkData));
-
         return {
           ...prev,
           [activeProfileName]: {
             ...currentJob,
             formData: {
               ...currentJob.formData,
-              bulkDefaultData: newBulkData
+              bulkDefaultData: {
+                  ...currentJob.formData.bulkDefaultData,
+                  [labelname]: value
+              }
             }
           }
         };
@@ -603,9 +547,6 @@ const PeopleForms: React.FC<PeopleFormsProps> = (props) => {
   }, [activeProfileName, selectedFormId, setJobs, createInitialJobState]);
 
   const handleClearDefaults = () => {
-      if (!activeProfileName || !selectedFormId) return;
-      const cacheKey = `zoho_people_bulk_defaults_${activeProfileName}_${selectedFormId}`;
-      localStorage.removeItem(cacheKey);
       handleFormStateChange('bulkDefaultData', {});
       toast({ title: "Defaults Cleared", description: "Wiped all default values." });
   };
@@ -714,232 +655,215 @@ const PeopleForms: React.FC<PeopleFormsProps> = (props) => {
   return (
     <>
       <DashboardLayout {...layoutProps}>
-        <div className="flex items-center justify-between">
-          <h1 className="text-lg font-semibold md:text-2xl">Zoho People Forms</h1>
-          <Button onClick={fetchForms} disabled={isLoadingForms || !selectedProfile}>
+        <div className="flex items-center justify-between mb-6">
+          <h1 className="text-2xl font-bold tracking-tight">Zoho People Forms</h1>
+          <Button onClick={fetchForms} disabled={isLoadingForms || !selectedProfile} variant="outline" className="bg-background">
             {isLoadingForms ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
             Refresh Forms
           </Button>
         </div>
         
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center"><FileText className="mr-2 h-5 w-5" /> Select a Form</CardTitle>
-            <CardDescription>Select a form to view its details and add a new record.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                    <Label htmlFor="form-select">Available Forms ({filteredForms.length})</Label>
-                    <div className="flex items-center space-x-2">
-                        <Switch id="custom-forms-only" checked={showCustomOnly} onCheckedChange={handleToggleChange} disabled={activeJob.isProcessing} />
-                        <Label htmlFor="custom-forms-only">Show Custom Only</Label>
-                    </div>
-                </div>
-                <Select value={selectedFormId} onValueChange={(val) => handleFormStateChange('selectedFormId', val)} disabled={isLoadingForms || forms.length === 0 || activeJob.isProcessing}>
-                    <SelectTrigger id="form-select" className="w-full">
-                        <SelectValue placeholder={isLoadingForms ? "Loading forms..." : "Select a form..."} />
-                    </SelectTrigger>
-                    <SelectContent className="z-[99]">
-                        {filteredForms.map((form) => (
-                            <SelectItem key={form.componentId} value={form.componentId.toString()}>
-                                <div className="flex items-center space-x-2">
-                                    {form.iscustom ? <Badge variant="outline">Custom</Badge> : <Badge variant="secondary">System</Badge>}
-                                    <span>{form.displayName}</span>
-                                </div>
-                            </SelectItem>
-                        ))}
-                    </SelectContent>
-                </Select>
-            </div>
+        {/* 🔥 NEW SIDE-BY-SIDE GRID LAYOUT 🔥 */}
+        <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
             
-            {selectedForm && (
-              <Tabs defaultValue="bulk" className="w-full"> 
-                <TabsList className="grid w-full grid-cols-2">
-                  <TabsTrigger value="single" disabled={activeJob.isProcessing}>Single Record</TabsTrigger>
-                  <TabsTrigger value="bulk" disabled={activeJob.isProcessing}>Bulk Import</TabsTrigger>
-                </TabsList>
-                
-                <TabsContent value="single">
-                    <Card>
-                        <CardHeader>
-                            <div className="flex items-center justify-between">
-                                <div>
-                                    <CardTitle>Add Record to "{selectedForm.displayName}"</CardTitle>
-                                    <CardDescription>Fill out the fields below to add a new record.</CardDescription>
-                                </div>
-                                <Button 
-                                    variant="ghost" 
-                                    size="sm" 
-                                    onClick={() => {
-                                        if (activeProfileName && selectedFormId) {
-                                            const cacheKey = `zoho_people_single_${activeProfileName}_${selectedFormId}`;
-                                            localStorage.removeItem(cacheKey);
-                                            setSingleFormData({});
-                                            toast({ title: "Form Cleared", description: "Wiped all fields." });
-                                        }
-                                    }} 
-                                    className="h-7 px-2 text-xs text-red-500 hover:text-red-700 hover:bg-red-50"
-                                >
-                                    <Trash2 className="h-3 w-3 mr-1" /> Clear Data
-                                </Button>
-                            </div>
-                        </CardHeader>
-                        <CardContent className="space-y-4">
-                            {isLoadingComponents ? (
-                                <div className="flex items-center justify-center p-8"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
-                            ) : formFields.length > 0 ? (
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    {formFields.map(field => (
-                                        <DynamicFormField key={field.labelname} field={field} value={singleFormData[field.labelname] || ''} onChange={handleSingleFormChange} disabled={isSubmitting} />
-                                    ))}
-                                </div>
-                            ) : (
-                                <p className="text-muted-foreground">No fields found for this form or fields could not be loaded.</p>
-                            )}
-                        </CardContent>
-                        {formFields.length > 0 && (
-                            <><Separator /><CardFooter className="pt-6">
-                                <Button onClick={handleSubmit} disabled={isSubmitting}>
-                                    {isSubmitting ? ( <Loader2 className="mr-2 h-4 w-4 animate-spin" /> ) : ( <Send className="mr-2 h-4 w-4" /> )} Submit Record
-                                </Button>
-                            </CardFooter></>
-                        )}
+            {/* LEFT COLUMN: RESULTS TABLE */}
+            <div className="xl:col-span-7 2xl:col-span-8 order-2 xl:order-1">
+                {selectedProfile ? (
+                    <div className="bg-card border rounded-xl shadow-sm overflow-hidden h-full">
+                        <PeopleResultsDisplay
+                            results={activeJob.results}
+                            isProcessing={activeJob.isProcessing}
+                            isComplete={activeJob.isComplete}
+                            totalToProcess={activeJob.totalToProcess}
+                            countdown={activeJob.countdown}
+                            filterText={activeJob.filterText}
+                            onFilterTextChange={handleFilterTextChange}
+                            primaryFieldLabel={formFields.find(f => f.labelname === bulkPrimaryField)?.displayname || 'Primary Field'}
+                        />
+                    </div>
+                ) : (
+                    <Card className="flex flex-col min-h-[400px] items-center justify-center text-muted-foreground border-dashed">
+                        <Users className="h-12 w-12 mb-4 opacity-20" />
+                        <p>Please select or add a People profile to continue.</p>
                     </Card>
-                </TabsContent>
-                
-                <TabsContent value="bulk">
-                   <Card>
-                        <CardHeader>
-                            <CardTitle>Bulk Import to "{selectedForm.displayName}"</CardTitle>
-                            <CardDescription>Paste a list of values for a primary field, and set default values for all other fields.</CardDescription>
-                        </CardHeader>
-                        <CardContent className="space-y-6">
-                            {isLoadingComponents ? (
-                                <div className="flex items-center justify-center p-8"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
-                            ) : formFields.length > 0 ? (
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                    <div className="space-y-4">
+                )}
+            </div>
+
+            {/* RIGHT COLUMN: FORMS (Sticky) */}
+            <div className="xl:col-span-5 2xl:col-span-4 order-1 xl:order-2">
+                <Card className="sticky top-6 shadow-md border-primary/10">
+                    <CardHeader className="bg-muted/30 pb-4 border-b">
+                        <CardTitle className="flex items-center text-lg"><FileText className="mr-2 h-5 w-5 text-primary" /> Active Form Controls</CardTitle>
+                        <CardDescription>Select a form and fill in the details below.</CardDescription>
+                    </CardHeader>
+                    <CardContent className="p-4 sm:p-6 space-y-6">
+                        
+                        {/* FORM SELECTOR */}
+                        <div className="space-y-3 bg-muted/20 p-4 rounded-lg border">
+                            <div className="flex items-center justify-between">
+                                <Label htmlFor="form-select" className="font-semibold">Available Forms ({filteredForms.length})</Label>
+                                <div className="flex items-center space-x-2">
+                                    <Switch id="custom-forms-only" checked={showCustomOnly} onCheckedChange={handleToggleChange} disabled={activeJob.isProcessing} />
+                                    <Label htmlFor="custom-forms-only" className="text-xs">Custom Only</Label>
+                                </div>
+                            </div>
+                            <Select value={selectedFormId} onValueChange={(val) => handleFormStateChange('selectedFormId', val)} disabled={isLoadingForms || forms.length === 0 || activeJob.isProcessing}>
+                                <SelectTrigger id="form-select" className="w-full bg-background font-medium">
+                                    <SelectValue placeholder={isLoadingForms ? "Loading forms..." : "Select a form..."} />
+                                </SelectTrigger>
+                                <SelectContent className="z-[99]">
+                                    {filteredForms.map((form) => (
+                                        <SelectItem key={form.componentId} value={form.componentId.toString()}>
+                                            <div className="flex items-center space-x-2">
+                                                {form.iscustom ? <Badge variant="outline" className="text-[10px] h-5">Custom</Badge> : <Badge variant="secondary" className="text-[10px] h-5">System</Badge>}
+                                                <span className="truncate">{form.displayName}</span>
+                                            </div>
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        
+                        {selectedForm && (
+                        <Tabs defaultValue="bulk" className="w-full"> 
+                            <TabsList className="grid w-full grid-cols-2 mb-4">
+                            <TabsTrigger value="single" disabled={activeJob.isProcessing}>Single Record</TabsTrigger>
+                            <TabsTrigger value="bulk" disabled={activeJob.isProcessing}>Bulk Import</TabsTrigger>
+                            </TabsList>
+                            
+                            <TabsContent value="single" className="mt-0">
+                                <div className="space-y-4">
+                                    <div className="flex items-center justify-between">
+                                        <h3 className="text-sm font-bold text-muted-foreground uppercase tracking-wider">New Record Details</h3>
+                                        <Button variant="ghost" size="sm" onClick={() => { if (activeProfileName && selectedFormId) { localStorage.removeItem(`zoho_people_single_${activeProfileName}_${selectedFormId}`); setSingleFormData({}); toast({ title: "Form Cleared" }); } }} className="h-7 px-2 text-xs text-red-500 hover:text-red-700 hover:bg-red-50"><Trash2 className="h-3 w-3 mr-1" /> Clear</Button>
+                                    </div>
+                                    
+                                    <div className="bg-muted/10 p-4 rounded-lg border">
+                                        {isLoadingComponents ? (
+                                            <div className="flex items-center justify-center p-8"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+                                        ) : formFields.length > 0 ? (
+                                            <div className="grid grid-cols-1 gap-5">
+                                                {formFields.map(field => (
+                                                    <DynamicFormField key={field.labelname} field={field} value={singleFormData[field.labelname] || ''} onChange={handleSingleFormChange} disabled={isSubmitting} />
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <p className="text-sm text-center text-muted-foreground py-4">No fields available.</p>
+                                        )}
+                                    </div>
+                                    
+                                    {formFields.length > 0 && (
+                                        <Button onClick={handleSubmit} disabled={isSubmitting} className="w-full mt-4">
+                                            {isSubmitting ? ( <Loader2 className="mr-2 h-4 w-4 animate-spin" /> ) : ( <Send className="mr-2 h-4 w-4" /> )} Submit Record
+                                        </Button>
+                                    )}
+                                </div>
+                            </TabsContent>
+                            
+                            <TabsContent value="bulk" className="mt-0">
+                                <div className="flex flex-col gap-5">
+                                    
+                                    {/* BLOCK 1: PRIMARY VALUES & SETTINGS */}
+                                    <div className="space-y-4 p-4 border rounded-lg bg-card shadow-sm">
                                         <div className="space-y-2">
-                                            <div className="flex justify-between items-center">
-                                                <Label htmlFor="primary-values">{formFields.find(f => f.labelname === bulkPrimaryField)?.displayname || 'Values'} (one per line)</Label>
-                                                <Badge variant="secondary" className="font-mono text-xs">{recordCount} records</Badge>
+                                            <div className="flex justify-between items-center mb-1">
+                                                <Label htmlFor="primary-values" className="font-bold">{formFields.find(f => f.labelname === bulkPrimaryField)?.displayname || 'Primary Values'}</Label>
+                                                <Badge variant="secondary" className="font-mono text-xs">{recordCount} lines</Badge>
                                             </div>
                                             <Textarea
-                                                id="primary-values" placeholder="Value 1&#x0A;Value 2&#x0A;Value 3" className="min-h-[200px] font-mono"
+                                                id="primary-values" placeholder="Paste your list here...&#x0A;One value per line" className="min-h-[150px] font-mono text-sm resize-y"
                                                 value={bulkPrimaryValues} onChange={(e) => handleFormStateChange('bulkPrimaryValues', e.target.value)} disabled={activeJob.isProcessing}
                                             />
                                         </div>
                                         
                                         <div className="space-y-2">
-                                            <Label htmlFor="primary-field">Primary Field (List)</Label>
+                                            <Label htmlFor="primary-field" className="text-xs text-muted-foreground font-semibold uppercase">Map List To Field:</Label>
                                             <Select value={bulkPrimaryField} onValueChange={(val) => handleFormStateChange('bulkPrimaryField', val)} disabled={activeJob.isProcessing}>
-                                                <SelectTrigger id="primary-field"><SelectValue placeholder="Select primary field..." /></SelectTrigger>
+                                                <SelectTrigger id="primary-field" className="bg-background"><SelectValue placeholder="Select primary field..." /></SelectTrigger>
                                                 <SelectContent>
                                                     {formFields.map(f => (<SelectItem key={f.labelname} value={f.labelname}>{f.displayname}</SelectItem>))}
                                                 </SelectContent>
                                             </Select>
                                         </div>
 
-                                        <div className="flex flex-wrap items-end gap-6 pt-2">
+                                        <div className="grid grid-cols-2 gap-4 pt-2">
                                             <div className="space-y-2">
-                                                <Label htmlFor="delay">Delay (seconds)</Label>
-                                                <Input id="delay" type="number" min="0" step="1" value={bulkDelay} onChange={(e) => handleFormStateChange('bulkDelay', parseInt(e.target.value) || 0)} className="w-24" disabled={activeJob.isProcessing} />
+                                                <Label htmlFor="delay" className="text-xs">Delay (seconds)</Label>
+                                                <Input id="delay" type="number" min="0" step="1" value={bulkDelay} onChange={(e) => handleFormStateChange('bulkDelay', parseInt(e.target.value) || 0)} disabled={activeJob.isProcessing} className="bg-background" />
                                             </div>
-
                                             <div className="space-y-2">
-                                                <Label htmlFor="stopFailures" className="whitespace-nowrap">Auto-pause after errors</Label>
-                                                <div className="flex items-center gap-2">
-                                                    <Input
-                                                        id="stopFailures"
-                                                        type="number"
-                                                        min="0"
-                                                        placeholder="0"
-                                                        value={stopAfterFailures === undefined ? '' : stopAfterFailures}
-                                                        onChange={(e) => {
-                                                            const val = e.target.value;
-                                                            handleFormStateChange('stopAfterFailures' as any, val === '' ? 0 : parseInt(val));
-                                                        }}
-                                                        className="w-24"
-                                                        disabled={activeJob.isProcessing}
-                                                    />
-                                                    <span className="text-xs text-muted-foreground">(0 = disabled)</span>
+                                                <Label htmlFor="stopFailures" className="text-xs whitespace-nowrap">Auto-Pause Error Limit</Label>
+                                                <Input id="stopFailures" type="number" min="0" placeholder="0 = Off" value={stopAfterFailures === undefined ? '' : stopAfterFailures} onChange={(e) => { const val = e.target.value; handleFormStateChange('stopAfterFailures' as any, val === '' ? 0 : parseInt(val)); }} disabled={activeJob.isProcessing} className="bg-background" />
+                                            </div>
+                                        </div>
+
+                                        {/* Mini Live Status Bar (Only shows when running) */}
+                                        {activeJob && (activeJob.isProcessing || activeJob.results.length > 0) && (
+                                            <div className="flex items-center justify-between bg-zinc-900 text-zinc-100 p-2.5 rounded-md mt-4 shadow-inner">
+                                                <div className="flex flex-col items-center px-2"><Clock className="h-3 w-3 mb-1 opacity-50" /><span className="font-mono text-[10px] font-medium">{formatTime(activeJob.processingTime)}</span></div>
+                                                <Separator orientation="vertical" className="h-6 bg-zinc-700" />
+                                                <div className="flex flex-col items-center px-2"><Hourglass className="h-3 w-3 mb-1 opacity-50" /><span className="font-mono text-[10px] font-medium">{remainingCount < 0 ? 0 : remainingCount} Left</span></div>
+                                                <Separator orientation="vertical" className="h-6 bg-zinc-700" />
+                                                <div className="flex flex-col items-center px-2 text-green-400"><CheckCircle2 className="h-3 w-3 mb-1" /><span className="font-mono text-[10px] font-bold">{activeJob.results.filter(r => r.success).length} OK</span></div>
+                                                <Separator orientation="vertical" className="h-6 bg-zinc-700" />
+                                                <div className="flex flex-col items-center px-2 text-red-400"><XCircle className="h-3 w-3 mb-1" /><span className="font-mono text-[10px] font-bold">{activeJob.results.filter(r => !r.success).length} Err</span></div>
+                                            </div>
+                                        )}
+                                    </div>
+                                    
+                                    {/* BLOCK 2: DEFAULT VALUES */}
+                                    <div className="space-y-4 p-4 border rounded-lg bg-card shadow-sm">
+                                        <div className="flex items-center justify-between border-b pb-2 mb-2">
+                                            <Label className="text-sm font-bold text-muted-foreground uppercase tracking-wider">Static Default Values</Label>
+                                            <Button variant="ghost" size="sm" onClick={handleClearDefaults} className="h-6 px-2 text-[10px] text-red-500 hover:text-red-700 hover:bg-red-50"><Trash2 className="h-3 w-3 mr-1" /> Clear</Button>
+                                        </div>
+                                        
+                                        {isLoadingComponents ? (
+                                            <div className="flex justify-center py-4"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+                                        ) : formFields.length > 0 ? (
+                                            <div className="space-y-4 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+                                                {formFields.filter(f => f.labelname !== bulkPrimaryField).map(field => (
+                                                    <DynamicFormField key={`bulk-${field.labelname}`} field={field} value={bulkDefaultData[field.labelname] || ''} onChange={handleBulkDefaultDataChange} isBulk={true} disabled={activeJob.isProcessing} />
+                                                ))}
+                                                {formFields.filter(f => f.labelname !== bulkPrimaryField).length === 0 && (
+                                                    <p className="text-xs text-center text-muted-foreground italic py-2">No other fields available to set defaults.</p>
+                                                )}
+                                            </div>
+                                        ) : (
+                                            <p className="text-xs text-center text-muted-foreground py-2">Fields failed to load.</p>
+                                        )}
+                                    </div>
+                                    
+                                    {/* BLOCK 3: ACTION BUTTONS */}
+                                    {formFields.length > 0 && (
+                                        <div className="pt-2">
+                                            {!activeJob.isProcessing ? (
+                                                <div className="flex flex-col gap-2 w-full">
+                                                    <Button onClick={handleStartBulkImport} disabled={!bulkPrimaryField || !bulkPrimaryValues} variant="default" size="lg" className="w-full shadow-md"><Send className="mr-2 h-4 w-4" /> Start Bulk Import</Button>
+                                                    {activeJob.results.filter(r => !r.success).length > 0 && (
+                                                        <Button variant="outline" size="sm" className="border-red-200 hover:bg-red-50 text-red-700" onClick={handleRetryFailed}><RotateCcw className="mr-2 h-3 w-3" /> Retry {activeJob.results.filter(r => !r.success).length} Failed Items</Button>
+                                                    )}
                                                 </div>
-                                            </div>
-
-                                            {activeJob && (activeJob.isProcessing || activeJob.results.length > 0) && (
-                                                <div className="flex items-center gap-3 bg-muted/40 p-2 rounded-md border border-border h-10">
-                                                    <div className="flex items-center gap-2 px-2"><Clock className="h-3 w-3 text-muted-foreground" /><span className="font-mono text-sm font-medium">{formatTime(activeJob.processingTime)}</span></div>
-                                                    <Separator orientation="vertical" className="h-4" />
-                                                    <div className="flex items-center gap-2 px-2"><Hourglass className="h-3 w-3 text-muted-foreground" /><span className="font-mono text-sm font-medium">{remainingCount < 0 ? 0 : remainingCount}</span></div>
-                                                    <Separator orientation="vertical" className="h-4" />
-                                                    <div className="flex items-center gap-2 px-2 text-success"><CheckCircle2 className="h-3 w-3" /><span className="font-mono text-sm font-bold">{activeJob.results.filter(r => r.success).length}</span></div>
-                                                    <Separator orientation="vertical" className="h-4" />
-                                                    <div className="flex items-center gap-2 px-2 text-destructive"><XCircle className="h-3 w-3" /><span className="font-mono text-sm font-bold">{activeJob.results.filter(r => !r.success).length}</span></div>
+                                            ) : (
+                                                <div className="grid grid-cols-2 gap-3 w-full">
+                                                    <Button type="button" variant={activeJob.isPaused ? "default" : "secondary"} size="lg" onClick={handlePauseResume} className="shadow-sm">
+                                                        {activeJob.isPaused ? <><Play className="h-4 w-4 mr-2" />Resume</> : <><Pause className="h-4 w-4 mr-2" />Pause</>}
+                                                    </Button>
+                                                    <Button type="button" variant="destructive" size="lg" onClick={handleEndJob} className="shadow-sm"><Square className="h-4 w-4 mr-2" /> End Job</Button>
                                                 </div>
                                             )}
                                         </div>
-                                    </div>
-                                    
-                                    <div className="space-y-4">
-                                        <div className="flex items-center justify-between mb-4">
-                                            <Label className="text-base font-medium">Default Values (for all records)</Label>
-                                            <Button 
-                                                variant="ghost" 
-                                                size="sm" 
-                                                onClick={handleClearDefaults} 
-                                                className="h-7 px-2 text-xs text-red-500 hover:text-red-700 hover:bg-red-50"
-                                            >
-                                                <Trash2 className="h-3 w-3 mr-1" /> Clear Defaults
-                                            </Button>
-                                        </div>
-                                        {formFields.filter(f => f.labelname !== bulkPrimaryField).map(field => (
-                                            <DynamicFormField key={`bulk-${field.labelname}`} field={field} value={bulkDefaultData[field.labelname] || ''} onChange={handleBulkDefaultDataChange} isBulk={true} disabled={activeJob.isProcessing} />
-                                        ))}
-                                    </div>
+                                    )}
+
                                 </div>
-                            ) : (
-                                <p className="text-muted-foreground">No fields found for this form or fields could not be loaded.</p>
-                            )}
-                        </CardContent>
-                        {formFields.length > 0 && (
-                             <CardFooter className="flex flex-col gap-3">
-                                {!activeJob.isProcessing ? (
-                                    <div className="flex gap-2 w-full">
-                                        <Button onClick={handleStartBulkImport} disabled={!bulkPrimaryField || !bulkPrimaryValues} variant="default" size="lg" className="flex-1"><Send className="mr-2 h-4 w-4" /> Start Bulk Import</Button>
-                                        {activeJob.results.filter(r => !r.success).length > 0 && (
-                                            <Button variant="secondary" size="lg" className="border-red-200 hover:bg-red-50 text-red-700" onClick={handleRetryFailed}><RotateCcw className="mr-2 h-4 w-4" /> Retry Failed ({activeJob.results.filter(r => !r.success).length})</Button>
-                                        )}
-                                    </div>
-                                ) : (
-                                    <div className="flex items-center justify-center space-x-4 w-full">
-                                        <Button type="button" variant="secondary" size="lg" onClick={handlePauseResume}>
-                                            {activeJob.isPaused ? <><Play className="h-4 w-4 mr-2" />Resume Job</> : <><Pause className="h-4 w-4 mr-2" />Pause Job</>}
-                                        </Button>
-                                        <Button type="button" variant="destructive" size="lg" onClick={handleEndJob}><Square className="h-4 w-4 mr-2" /> End Job</Button>
-                                    </div>
-                                )}
-                             </CardFooter>
+                            </TabsContent>
+                        </Tabs>
                         )}
-                   </Card>
-                </TabsContent>
-              </Tabs>
-            )}
-          </CardContent>
-        </Card>
-        
-        {selectedProfile && (
-            <PeopleResultsDisplay
-                results={activeJob.results}
-                isProcessing={activeJob.isProcessing}
-                isComplete={activeJob.isComplete}
-                totalToProcess={activeJob.totalToProcess}
-                countdown={activeJob.countdown}
-                filterText={activeJob.filterText}
-                onFilterTextChange={handleFilterTextChange}
-                primaryFieldLabel={formFields.find(f => f.labelname === bulkPrimaryField)?.displayname || 'Primary Field'}
-            />
-        )}
+                    </CardContent>
+                </Card>
+            </div>
+
+        </div>
       </DashboardLayout>
 
       <Dialog open={isStatusModalOpen} onOpenChange={setIsStatusModalOpen}>
@@ -948,14 +872,14 @@ const PeopleForms: React.FC<PeopleFormsProps> = (props) => {
             <DialogTitle>API Connection Status</DialogTitle>
             <DialogDescription>This is the live status of the connection to the Zoho People API.</DialogDescription>
           </DialogHeader>
-          <div className={`p-4 rounded-md ${apiStatus.status === 'success' ? 'bg-green-100 dark:bg-green-900/50' : apiStatus.status === 'error' ? 'bg-red-100 dark:bg-red-900/50' : 'bg-muted'}`}>
+          <div className={`p-4 rounded-md ${apiStatus.status === 'success' ? 'bg-green-100 dark:bg-green-900/50 text-green-900 dark:text-green-100' : apiStatus.status === 'error' ? 'bg-red-100 dark:bg-red-900/50 text-red-900 dark:text-red-100' : 'bg-muted'}`}>
             <p className="font-bold text-lg">{apiStatus.status.charAt(0).toUpperCase() + apiStatus.status.slice(1)}</p>
-            <p className="text-sm text-muted-foreground mt-1">{apiStatus.message}</p>
+            <p className="text-sm mt-1 opacity-90">{apiStatus.message}</p>
           </div>
           {apiStatus.fullResponse && (
             <div className="mt-4">
               <h4 className="text-sm font-semibold mb-2 text-foreground">Full Response from Server:</h4>
-              <pre className="bg-muted p-4 rounded-lg text-xs font-mono text-foreground border max-h-60 overflow-y-auto">{JSON.stringify(apiStatus.fullResponse, null, 2)}</pre>
+              <pre className="bg-zinc-950 p-4 rounded-lg text-xs font-mono text-zinc-300 border max-h-60 overflow-y-auto shadow-inner">{JSON.stringify(apiStatus.fullResponse, null, 2)}</pre>
             </div>
           )}
           <DialogFooter><Button onClick={() => setIsStatusModalOpen(false)} className="mt-4">Close</Button></DialogFooter>

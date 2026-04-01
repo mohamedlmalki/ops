@@ -15,7 +15,9 @@ const readProfiles = () => { try { if (fs.existsSync(PROFILES_PATH)) { return JS
 const writeProfiles = (profiles) => { try { fs.writeFileSync(PROFILES_PATH, JSON.stringify(profiles, null, 2)); } catch (e) { console.error(e); } };
 const readTicketLog = () => { try { if (fs.existsSync(TICKET_LOG_PATH)) { return JSON.parse(fs.readFileSync(TICKET_LOG_PATH)); } } catch (e) { console.error(e); } return []; };
 const writeToTicketLog = (newEntry) => { const log = readTicketLog(); log.push(newEntry); try { fs.writeFileSync(TICKET_LOG_PATH, JSON.stringify(log, null, 2)); } catch (e) { console.error(e); } return []; };
-const createJobId = (socketId, profileName, jobType) => `${socketId}_${profileName}_${jobType}`;
+
+// 🔥 FIX: Jobs are now tracked by Profile Name, NOT the browser tab ID!
+const createJobId = (socketId, profileName, jobType) => `${profileName}_${jobType}`;
 
 const parseError = (error) => {
     if (error.response) return { message: `HTTP ${error.response.status}`, fullResponse: error.response.data };

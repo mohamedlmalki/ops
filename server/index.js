@@ -340,6 +340,11 @@ app.delete('/api/profiles/:profileNameToDelete', (req, res) => {
 io.on('connection', (socket) => {
     console.log(`[INFO] New connection. Socket ID: ${socket.id}`);
 
+    // 🔥 FIX: Return the currently active jobs back to the frontend to fix stuck states
+    socket.on('requestActiveJobs', () => {
+        socket.emit('activeJobsSync', Object.keys(activeJobs));
+    });
+
     // Dynamic API status check
     socket.on('checkApiStatus', async (data) => {
         try {
@@ -468,10 +473,9 @@ io.on('connection', (socket) => {
         if (activeJobs[jobId]) activeJobs[jobId].status = 'ended';
     });
 
+    // 🔥 FIX: We no longer delete jobs when a tab refreshes/disconnects!
     socket.on('disconnect', () => {
-        Object.keys(activeJobs).forEach(jobId => {
-            if (jobId.startsWith(socket.id)) delete activeJobs[jobId];
-        });
+        console.log(`[INFO] Socket disconnected: ${socket.id}. Jobs will remain active in background.`);
     });
 
     socket.on('getProjectsPortals', (data) => {
