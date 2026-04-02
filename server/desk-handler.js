@@ -27,7 +27,6 @@ const interruptibleSleep = (ms, jobId) => {
     });
 };
 
-// --- NEW AUTOMATED DELUGE LOG CHECKER ---
 const checkDelugeLog = async (socket, { ticket, profile, resultEventName = 'ticketUpdate', jobId, email }) => {
     let fullResponse = { ticketCreate: ticket, verifyDeluge: {} };
     console.log(`[Desk] Verifying Deluge log for #${ticket.ticketNumber}...`);
@@ -49,7 +48,7 @@ const checkDelugeLog = async (socket, { ticket, profile, resultEventName = 'tick
             if (socket) {
                 socket.emit(resultEventName, { 
                     ticketNumber: ticket.ticketNumber, 
-                    success: isSuccess, // <--- CHANGED: Now the whole row fails if Deluge fails!
+                    success: isSuccess,
                     delugeStatus: isSuccess ? 'Success' : 'Failed', 
                     details: isSuccess ? 'Deluge Function Executed Successfully.' : 'Deluge Function Failed.', 
                     fullResponse, 
@@ -63,7 +62,7 @@ const checkDelugeLog = async (socket, { ticket, profile, resultEventName = 'tick
             if (socket) {
                 socket.emit(resultEventName, { 
                     ticketNumber: ticket.ticketNumber, 
-                    success: false, // <--- CHANGED: Now it fails if the log is missing!
+                    success: false,
                     delugeStatus: 'Failed',
                     details: 'Deluge Verification Failed: No log comment found.',
                     fullResponse,
@@ -81,7 +80,7 @@ const checkDelugeLog = async (socket, { ticket, profile, resultEventName = 'tick
         if (socket) {
              socket.emit(resultEventName, { 
                 ticketNumber: ticket.ticketNumber, 
-                success: false, // <--- CHANGED: Fails on error
+                success: false,
                 delugeStatus: 'Failed',
                 details: `Deluge Verify Error: ${message}`,
                 fullResponse,
@@ -115,7 +114,7 @@ const handleGetTicketComments = async (socket, data) => {
 };
 
 const handleSendSingleTicket = async (data) => {
-    const { email, subject, description, selectedProfileName, sendDirectReply } = data;
+    const { email, subject, description, selectedProfileName, sendDirectReply, senderName } = data; // ADDED senderName
     if (!email || !selectedProfileName) return { success: false, error: 'Missing email or profile.' };
     const profiles = readProfiles();
     const activeProfile = profiles.find(p => p.profileName === selectedProfileName);
@@ -123,7 +122,12 @@ const handleSendSingleTicket = async (data) => {
     try {
         if (!activeProfile) return { success: false, error: 'Profile not found.' };
         const deskConfig = activeProfile.desk;
+        
+        // --- ADDED CATEGORY/SENDER INJECTION ---
         const ticketData = { subject, description, departmentId: deskConfig.defaultDepartmentId, contact: { email }, channel: 'Email' };
+        if (senderName && senderName.trim() !== '') {
+            ticketData.category = senderName.trim();
+        }
 
         const ticketResponse = await makeApiCall('post', '/api/v1/tickets', ticketData, activeProfile, 'desk');
         const newTicket = ticketResponse.data;
@@ -155,12 +159,17 @@ const handleVerifyTicketEmail = async (data) => {
 
 const handleSendTestTicket = async (socket, data) => {
     console.log(`[Desk] Sending Test Ticket to ${data.email}...`);
-    const { email, subject, description, selectedProfileName, sendDirectReply, verifyEmail, verifyDelugeLog, activeProfile } = data;
+    const { email, subject, description, selectedProfileName, sendDirectReply, verifyEmail, verifyDelugeLog, activeProfile, senderName } = data; // ADDED senderName
      if (!email || !selectedProfileName) return socket.emit('testTicketResult', { success: false, error: 'Missing email or profile.' });
     try {
         if (!activeProfile) return socket.emit('testTicketResult', { success: false, error: 'Profile not found.' });
         const deskConfig = activeProfile.desk;
+        
+        // --- ADDED CATEGORY/SENDER INJECTION ---
         const ticketData = { subject, description, departmentId: deskConfig.defaultDepartmentId, contact: { email }, channel: 'Email' };
+        if (senderName && senderName.trim() !== '') {
+            ticketData.category = senderName.trim();
+        }
 
         const ticketResponse = await makeApiCall('post', '/api/v1/tickets', ticketData, activeProfile, 'desk');
         const newTicket = ticketResponse.data;
@@ -192,8 +201,7 @@ const handleSendTestTicket = async (socket, data) => {
 };
 
 const handleStartBulkCreate = async (socket, data) => {
-    // UPDATED: Added verifyDelugeLog here
-    const { emails, subject, description, delay, selectedProfileName, sendDirectReply, verifyEmail, verifyDelugeLog, activeProfile, stopAfterFailures = 0 } = data;
+    const { emails, subject, description, delay, selectedProfileName, sendDirectReply, verifyEmail, verifyDelugeLog, activeProfile, stopAfterFailures = 0, senderName } = data; // ADDED senderName
     
     console.log(`[Desk] Starting Bulk Job for ${selectedProfileName}. Total: ${emails.length} emails.`);
     const jobId = createJobId(socket.id, selectedProfileName, 'ticket');
@@ -209,7 +217,6 @@ const handleStartBulkCreate = async (socket, data) => {
             if (!activeJobs[jobId] || activeJobs[jobId].status === 'ended') break;
             while (activeJobs[jobId]?.status === 'paused') await new Promise(resolve => setTimeout(resolve, 500));
 
-            // Auto-pause check
             if (activeJobs[jobId].stopAfterFailures > 0 && activeJobs[jobId].consecutiveFailures >= activeJobs[jobId].stopAfterFailures) {
                  if (activeJobs[jobId].status !== 'paused') {
                      activeJobs[jobId].status = 'paused';
@@ -227,7 +234,11 @@ const handleStartBulkCreate = async (socket, data) => {
 
             console.log(`[Desk] Processing (${i+1}/${emails.length}): ${email}`);
 
+            // --- ADDED CATEGORY/SENDER INJECTION ---
             const ticketData = { subject, description, departmentId: deskConfig.defaultDepartmentId, contact: { email }, channel: 'Email' };
+            if (senderName && senderName.trim() !== '') {
+                ticketData.category = senderName.trim();
+            }
             
             try {
                 const ticketResponse = await makeApiCall('post', '/api/v1/tickets', ticketData, activeProfile, 'desk');
@@ -257,17 +268,14 @@ const handleStartBulkCreate = async (socket, data) => {
                     details: successMessage,
                     fullResponse: fullResponseData,
                     profileName: selectedProfileName,
-                    delugeStatus: verifyDelugeLog ? 'Pending' : undefined // Set pending state immediately
+                    delugeStatus: verifyDelugeLog ? 'Pending' : undefined 
                 });
 
                 if (verifyEmail) {
-                    console.log(`[Desk] Queuing verification for #${newTicket.ticketNumber}...`);
                     verifyTicketEmail(socket, { ticket: newTicket, profile: activeProfile, jobId, email });
                 }
 
-                // --- TRIGGER THE AUTOMATIC LOG CHECK ---
                 if (verifyDelugeLog) {
-                    console.log(`[Desk] Queuing Deluge Log verification for #${newTicket.ticketNumber}...`);
                     checkDelugeLog(socket, { ticket: newTicket, profile: activeProfile, jobId, email });
                 }
 
@@ -488,5 +496,5 @@ module.exports = {
     handleUpdateMailReplyAddressDetails,
     handleSendSingleTicket,
     handleVerifyTicketEmail,
-    handleGetTicketComments // Exported so index.js can use it!
+    handleGetTicketComments
 };

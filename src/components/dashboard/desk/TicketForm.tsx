@@ -1,7 +1,7 @@
 // --- FILE: src/components/dashboard/desk/TicketForm.tsx ---
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -11,26 +11,26 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { 
     Send, Eye, Mail, Clock, MessageSquare, Users, Pause, Play, Square, 
     Bot, Upload, Edit, RefreshCw, Trash2, MailWarning, CheckCircle2, 
-    XCircle, ImagePlus, Timer, AlertTriangle, RotateCcw, Save, FileDown, Sparkles 
+    XCircle, ImagePlus, AlertTriangle, RotateCcw, Sparkles 
 } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Switch } from '@/components/ui/switch'; // --- IMPORT SWITCH ---
 import { useToast } from '@/hooks/use-toast';
 import { Socket } from 'socket.io-client';
 import { Profile, JobState } from '@/App';
 import { formatTime } from '@/lib/utils';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
-interface TicketFormData {
+export interface TicketFormData {
   emails: string;
   subject: string;
   description: string;
   delay: number;
   sendDirectReply: boolean;
   verifyEmail: boolean;
-  verifyDelugeLog: boolean; // --- NEW FIELD ---
+  verifyDelugeLog: boolean;
   displayName: string;
   stopAfterFailures: number; 
+  senderName: string; 
 }
 
 interface TicketFormProps {
@@ -39,8 +39,6 @@ interface TicketFormProps {
   isPaused: boolean;
   onPauseResume: () => void;
   onEndJob: () => void;
-  // --- UPDATED ONSENDTEST ---
-  onSendTest: (data: { email: string, subject: string, description: string, sendDirectReply: boolean, verifyEmail: boolean, verifyDelugeLog: boolean }) => void;
   formData: TicketFormData;
   onFormDataChange: (data: TicketFormData) => void;
   socket: Socket | null;
@@ -50,13 +48,6 @@ interface TicketFormProps {
   jobState: JobState | null;
   onRetryFailed: () => void;
   failedCount: number;
-}
-
-// --- Template Interface ---
-interface SavedTemplate {
-    name: string;
-    subject: string;
-    description: string;
 }
 
 const ImageToolDialog = ({ onApply }: { onApply: (html: string) => void }) => {
@@ -83,64 +74,18 @@ const ImageToolDialog = ({ onApply }: { onApply: (html: string) => void }) => {
 };
 
 export const TicketForm: React.FC<TicketFormProps> = ({
-  onSubmit, isProcessing, isPaused, onPauseResume, onEndJob, onSendTest,
+  onSubmit, isProcessing, isPaused, onPauseResume, onEndJob,
   formData, onFormDataChange, socket, selectedProfile, onFetchFailures,
   onClearTicketLogs, jobState, onRetryFailed, failedCount
 }) => {
-  const [testEmail, setTestEmail] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
   const [isLoadingName, setIsLoadingName] = useState(false);
   
-  // --- Template State ---
-  const [templates, setTemplates] = useState<SavedTemplate[]>([]);
-  const [templateName, setTemplateName] = useState('');
-
-  // Load templates on mount
-  useEffect(() => {
-      const saved = localStorage.getItem('zohoDeskTemplates');
-      if (saved) {
-          try { setTemplates(JSON.parse(saved)); } catch (e) { console.error("Failed to load templates"); }
-      }
-  }, []);
-
-  const saveTemplate = () => {
-      if (!templateName.trim() || !formData.subject || !formData.description) {
-          toast({ title: "Validation Error", description: "Enter a template name, subject, and description.", variant: "destructive" });
-          return;
-      }
-      const newTemplate = { name: templateName, subject: formData.subject, description: formData.description };
-      const updated = [...templates, newTemplate];
-      setTemplates(updated);
-      localStorage.setItem('zohoDeskTemplates', JSON.stringify(updated));
-      setTemplateName('');
-      toast({ title: "Template Saved", description: `"${templateName}" has been saved.` });
-  };
-
-  const loadTemplate = (name: string) => {
-      const tmpl = templates.find(t => t.name === name);
-      if (tmpl) {
-          onFormDataChange({ ...formData, subject: tmpl.subject, description: tmpl.description });
-          toast({ title: "Template Loaded", description: `Subject and Description updated.` });
-      }
-  };
-
-  const deleteTemplate = (name: string) => {
-      const updated = templates.filter(t => t.name !== name);
-      setTemplates(updated);
-      localStorage.setItem('zohoDeskTemplates', JSON.stringify(updated));
-      toast({ title: "Template Deleted" });
-  };
-
-  // --- Smart Cleaner Logic ---
   const handleCleanEmails = () => {
       if (!formData.emails) return;
-      
       const raw = formData.emails;
-      // 1. Split by newline, comma, or semicolon
       const split = raw.split(/[\n,;]+/);
-      
-      // 2. Extract valid emails using regex, trim, lowercase
       const validEmails = new Set<string>();
       const emailRegex = /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+)/;
       
@@ -194,26 +139,12 @@ export const TicketForm: React.FC<TicketFormProps> = ({
   const emailCount = useMemo(() => formData.emails.split('\n').filter(email => email.trim() !== '').length, [formData.emails]);
   const handleSubmit = (e: React.FormEvent) => { e.preventDefault(); onSubmit(); };
   
-  // Ensure we omit verifyDelugeLog from the simple input handler so TypeScript doesn't complain
   const handleInputChange = (field: keyof Omit<TicketFormData, 'sendDirectReply' | 'verifyEmail' | 'verifyDelugeLog'>, value: string | number) => { 
       onFormDataChange({ ...formData, [field]: value }); 
   };
   
-  const handleCheckboxChange = (field: 'sendDirectReply' | 'verifyEmail', checked: boolean) => { 
+  const handleCheckboxChange = (field: 'sendDirectReply' | 'verifyEmail' | 'verifyDelugeLog', checked: boolean) => { 
       onFormDataChange({ ...formData, [field]: checked }); 
-  };
-
-  const handleTestClick = () => {
-    if (!testEmail) { alert("Please enter an email address for the test ticket."); return; }
-    // --- UPDATED ONSENDTEST CALL ---
-    onSendTest({ 
-        email: testEmail, 
-        subject: formData.subject, 
-        description: formData.description, 
-        sendDirectReply: formData.sendDirectReply, 
-        verifyEmail: formData.verifyEmail,
-        verifyDelugeLog: formData.verifyDelugeLog 
-    });
   };
 
   const handleFileImport = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -230,20 +161,6 @@ export const TicketForm: React.FC<TicketFormProps> = ({
   };
 
   const handleApplyImage = (html: string) => { onFormDataChange({ ...formData, description: formData.description + '\n' + html }); };
-
-  const estimatedTime = useMemo(() => {
-    if (emailCount === 0) return null;
-    const totalSeconds = emailCount * (formData.delay || 0);
-    if (totalSeconds === 0) return "0s";
-    const hours = Math.floor(totalSeconds / 3600);
-    const minutes = Math.floor((totalSeconds % 3600) / 60);
-    const seconds = totalSeconds % 60;
-    const parts = [];
-    if (hours > 0) parts.push(`${hours}h`);
-    if (minutes > 0) parts.push(`${minutes}m`);
-    if (seconds > 0 || parts.length === 0) parts.push(`${seconds}s`);
-    return parts.join(' ');
-  }, [emailCount, formData.delay]);
 
   const successCount = jobState?.results.filter(r => r.success).length || 0;
   const errorCount = jobState?.results.filter(r => !r.success).length || 0;
@@ -274,6 +191,8 @@ export const TicketForm: React.FC<TicketFormProps> = ({
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-6">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            
+            {/* LEFT COLUMN */}
             <div className="space-y-4">
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
@@ -282,7 +201,6 @@ export const TicketForm: React.FC<TicketFormProps> = ({
                     <span>Recipient Emails</span>
                   </Label>
                   <div className='flex items-center space-x-2'>
-                    {/* --- Clean Button --- */}
                     <Button 
                         type="button" 
                         variant="ghost" 
@@ -295,8 +213,6 @@ export const TicketForm: React.FC<TicketFormProps> = ({
                         <Sparkles className="h-3 w-3 mr-1" />
                         Clean List
                     </Button>
-                    {/* ------------------------- */}
-                    
                     <input type="file" ref={fileInputRef} className="hidden" accept=".csv,.txt" onChange={handleFileImport} />
                     <Button type="button" variant="outline" size="sm" onClick={() => fileInputRef.current?.click()} disabled={isProcessing}>
                       <Upload className="h-3 w-3 mr-2" />
@@ -318,6 +234,7 @@ export const TicketForm: React.FC<TicketFormProps> = ({
                   disabled={isProcessing}
                 />
                 
+                {/* TIMERS AND COUNTERS */}
                 {jobState && (jobState.isProcessing || jobState.results.length > 0) && (
                     <div className="pt-4 border-t border-dashed">
                         <div className="grid grid-cols-4 gap-4 text-center">
@@ -328,120 +245,82 @@ export const TicketForm: React.FC<TicketFormProps> = ({
                         </div>
                     </div>
                 )}
+              </div>
 
-                <div className="pt-4 border-t border-dashed">
-                    <Label htmlFor="test-email" className="text-xs text-muted-foreground">Send a single test ticket</Label>
-                    <div className="flex items-center space-x-2 mt-2">
-                        <Input id="test-email" type="email" placeholder="Enter test email..." value={testEmail} onChange={(e) => setTestEmail(e.target.value)} className="h-10 bg-muted/30 border-border focus:bg-card" disabled={isProcessing} />
-                        <Button type="button" variant="outline" onClick={handleTestClick} disabled={isProcessing || !testEmail}>Test</Button>
-                    </div>
-                </div>
+              {/* MOVED: DELAY, AUTO-PAUSE, AND OPTIONAL SETTINGS */}
+              <div className="pt-4 border-t border-border/50">
+                  <div className="grid grid-cols-2 gap-4 mb-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="delay" className="flex items-center space-x-2"><Clock className="h-4 w-4" /><span>Delay (Sec)</span></Label>
+                        <div className="flex items-center space-x-3">
+                          <Input id="delay" type="number" min="0" step="1" value={formData.delay} onChange={(e) => handleInputChange('delay', parseInt(e.target.value) || 0)} className="bg-muted/30 border-border focus:bg-card" required disabled={isProcessing} />
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="stopAfterFailures" className="flex items-center space-x-2"><AlertTriangle className="h-4 w-4 text-amber-500" /><span>Auto-Pause</span></Label>
+                        <div className="flex items-center space-x-3">
+                          <Input id="stopAfterFailures" type="number" min="0" step="1" placeholder="0 (Disabled)" value={formData.stopAfterFailures === 0 ? '' : formData.stopAfterFailures} onChange={(e) => handleInputChange('stopAfterFailures', e.target.value === '' ? 0 : parseInt(e.target.value))} className="bg-muted/30 border-border focus:bg-card" disabled={isProcessing} />
+                        </div>
+                      </div>
+                  </div>
+
+                  <div className="space-y-2">
+                      <Label className="flex items-center space-x-2"><Bot className="h-4 w-4" /><span>Optional Email Actions</span></Label>
+                      <div className="space-y-4 rounded-lg bg-muted/30 p-4 border border-border">
+                        <div className="flex items-start space-x-3">
+                            <Checkbox id="sendDirectReply" checked={formData.sendDirectReply} onCheckedChange={(checked) => handleCheckboxChange('sendDirectReply', !!checked)} disabled={isProcessing || formData.verifyEmail} />
+                            <div className="grid gap-1.5 leading-none"><Label htmlFor="sendDirectReply" className="font-medium hover:cursor-pointer">Send Direct Public Reply</Label><p className="text-xs text-muted-foreground">Disables automation. Sends description as email.</p></div>
+                        </div>
+                        <div className="flex items-start space-x-3">
+                            <Checkbox id="verifyEmail" checked={formData.verifyEmail} onCheckedChange={(checked) => handleCheckboxChange('verifyEmail', !!checked)} disabled={isProcessing || formData.sendDirectReply} />
+                            <div className="grid gap-1.5 leading-none"><Label htmlFor="verifyEmail" className="font-medium hover:cursor-pointer">Verify Automation Email</Label><p className="text-xs text-muted-foreground">Slower. Checks if automation was triggered.</p></div>
+                        </div>
+                        <div className="flex items-start space-x-3 pt-1 border-t border-border/50">
+                            <Checkbox id="verifyDelugeLog" checked={formData.verifyDelugeLog} onCheckedChange={(checked) => handleCheckboxChange('verifyDelugeLog', !!checked)} disabled={isProcessing} />
+                            <div className="grid gap-1.5 leading-none">
+                                <Label htmlFor="verifyDelugeLog" className="font-medium hover:cursor-pointer flex items-center">
+                                    <Sparkles className="h-3 w-3 mr-1 text-green-500" /> Verify Deluge Log
+                                </Label>
+                                <p className="text-xs text-muted-foreground">Checks if your custom function executed and successfully wrote the log comment.</p>
+                            </div>
+                        </div>
+                      </div>
+                  </div>
               </div>
             </div>
 
+            {/* RIGHT COLUMN */}
             <div className="space-y-4">
-              {/* --- Template Manager --- */}
-              <div className="p-3 bg-muted/20 rounded-lg border border-dashed border-border mb-4">
-                  <div className="flex items-center justify-between mb-2">
-                      <Label className="text-xs font-semibold text-muted-foreground flex items-center">
-                          <FileDown className="h-3 w-3 mr-1" /> Load Template
-                      </Label>
-                      {templates.length > 0 && <span className="text-xs text-muted-foreground">{templates.length} saved</span>}
-                  </div>
-                  <div className="flex space-x-2">
-                      <Select onValueChange={loadTemplate} disabled={templates.length === 0 || isProcessing}>
-                          <SelectTrigger className="h-8 text-xs">
-                              <SelectValue placeholder="Select a template..." />
-                          </SelectTrigger>
-                          <SelectContent>
-                              {templates.map((t) => (
-                                  <div key={t.name} className="flex justify-between items-center pr-2">
-                                      <SelectItem value={t.name}>{t.name}</SelectItem>
-                                      <Trash2 
-                                          className="h-3 w-3 text-destructive cursor-pointer hover:scale-110" 
-                                          onClick={(e) => { e.stopPropagation(); deleteTemplate(t.name); }}
-                                      />
-                                  </div>
-                              ))}
-                          </SelectContent>
-                      </Select>
-                  </div>
-                  <div className="flex items-center space-x-2 mt-2 pt-2 border-t border-dashed border-border/50">
-                      <Input 
-                          placeholder="New template name..." 
-                          value={templateName} 
-                          onChange={e => setTemplateName(e.target.value)}
-                          className="h-8 text-xs"
-                          disabled={isProcessing}
-                      />
-                      <Button type="button" size="sm" variant="outline" className="h-8" onClick={saveTemplate} disabled={!templateName}>
-                          <Save className="h-3 w-3 mr-1" /> Save
-                      </Button>
-                  </div>
-              </div>
-              {/* ----------------------------- */}
-
+              
+              {/* SENDER NAMES */}
               <div className="space-y-2">
-                <Label htmlFor="displayName" className="flex items-center space-x-2"><Edit className="h-4 w-4" /><span>Sender Name</span></Label>
+                <Label htmlFor="displayName" className="flex items-center space-x-2">
+                    <Edit className="h-4 w-4" /><span>Sender Name (Native Zoho)</span>
+                </Label>
                 <div className="flex items-center space-x-2">
                     <Input id="displayName" value={formData.displayName} onChange={(e) => handleInputChange('displayName', e.target.value)} placeholder={isLoadingName ? "Loading..." : "Not configured"} disabled={!selectedProfile?.desk?.mailReplyAddressId || isLoadingName} />
                     <Button type="button" size="sm" onClick={handleUpdateName} disabled={!selectedProfile?.desk?.mailReplyAddressId || isLoadingName || formData.displayName === 'N/A'}>Update</Button>
-                    <Button type="button" size="icon" variant="ghost" onClick={fetchDisplayName} disabled={!selectedProfile?.desk?.mailReplyAddressId || isLoadingName}><RefreshCw className={`h-4 w-4 ${isLoadingName ? 'animate-spin' : ''}`} /></Button>
+                    <Button type="button" size="icon" variant="ghost" onClick={fetchDisplayName} disabled={!selectedProfile?.desk?.mailReplyAddressId || isLoadingName}>
+                        <RefreshCw className={`h-4 w-4 ${isLoadingName ? 'animate-spin' : ''}`} />
+                    </Button>
                 </div>
               </div>
 
               <div className="space-y-2">
+                <Label htmlFor="senderName" className="flex items-center space-x-2">
+                    <Sparkles className="h-4 w-4 text-green-500" /><span>Sender Name (Deluge Workflow)</span>
+                </Label>
+                <Input id="senderName" placeholder="e.g., Vibrobet Support" value={formData.senderName || ''} onChange={(e) => handleInputChange('senderName', e.target.value)} className="h-10 bg-muted/30 border-border focus:bg-card transition-colors" disabled={isProcessing} />
+                <p className="text-[10px] text-muted-foreground">This injects the name into the Category field for the custom Deluge script.</p>
+              </div>
+
+              {/* TICKET SUBJECT */}
+              <div className="space-y-2 mt-4">
                 <Label htmlFor="subject" className="flex items-center space-x-2"><MessageSquare className="h-4 w-4" /><span>Ticket Subject</span></Label>
                 <Input id="subject" placeholder="Enter ticket subject..." value={formData.subject} onChange={(e) => handleInputChange('subject', e.target.value)} className="h-12 bg-muted/30 border-border focus:bg-card transition-colors" required disabled={isProcessing} />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="delay" className="flex items-center space-x-2"><Clock className="h-4 w-4" /><span>Delay (Sec)</span></Label>
-                    <div className="flex items-center space-x-3">
-                      <Input id="delay" type="number" min="0" step="1" value={formData.delay} onChange={(e) => handleInputChange('delay', parseInt(e.target.value) || 0)} className="bg-muted/30 border-border focus:bg-card" required disabled={isProcessing} />
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="stopAfterFailures" className="flex items-center space-x-2"><AlertTriangle className="h-4 w-4 text-amber-500" /><span>Auto-Pause</span></Label>
-                    <div className="flex items-center space-x-3">
-                      <Input id="stopAfterFailures" type="number" min="0" step="1" placeholder="0 (Disabled)" value={formData.stopAfterFailures === 0 ? '' : formData.stopAfterFailures} onChange={(e) => handleInputChange('stopAfterFailures', e.target.value === '' ? 0 : parseInt(e.target.value))} className="bg-muted/30 border-border focus:bg-card" disabled={isProcessing} />
-                    </div>
-                  </div>
-              </div>
-
-              {/* --- UPDATED: Optional Email Actions --- */}
-              <div className="space-y-2 pt-2">
-                  <Label className="flex items-center space-x-2"><Bot className="h-4 w-4" /><span>Optional Email Actions</span></Label>
-                  <div className="space-y-3 rounded-lg bg-muted/30 p-4 border border-border">
-                    <div className="flex items-start space-x-3">
-                        <Checkbox id="sendDirectReply" checked={formData.sendDirectReply} onCheckedChange={(checked) => handleCheckboxChange('sendDirectReply', !!checked)} disabled={isProcessing || formData.verifyEmail} />
-                        <div className="grid gap-1.5 leading-none"><Label htmlFor="sendDirectReply" className="font-medium hover:cursor-pointer">Send Direct Public Reply</Label><p className="text-xs text-muted-foreground">Disables automation. Sends description as email.</p></div>
-                    </div>
-                     <div className="flex items-start space-x-3">
-                        <Checkbox id="verifyEmail" checked={formData.verifyEmail} onCheckedChange={(checked) => handleCheckboxChange('verifyEmail', !!checked)} disabled={isProcessing || formData.sendDirectReply} />
-                        <div className="grid gap-1.5 leading-none"><Label htmlFor="verifyEmail" className="font-medium hover:cursor-pointer">Verify Automation Email</Label><p className="text-xs text-muted-foreground">Slower. Checks if automation was triggered.</p></div>
-                    </div>
-                  </div>
-                  
-                  {/* --- NEW: Deluge Verification Switch --- */}
-                  <div className="flex flex-row items-center justify-between rounded-lg border p-4 bg-muted/10 mt-2">
-                      <div className="space-y-0.5">
-                          <Label className="text-sm font-medium flex items-center">
-                              <Sparkles className="h-3 w-3 mr-1 text-green-500" /> Verify Deluge Log
-                          </Label>
-                          <p className="text-xs text-muted-foreground">
-                              Checks if your custom function executed and successfully wrote the log comment.
-                          </p>
-                      </div>
-                      <Switch
-                          checked={formData.verifyDelugeLog}
-                          onCheckedChange={(checked) => onFormDataChange({ ...formData, verifyDelugeLog: checked })}
-                          disabled={isProcessing}
-                      />
-                  </div>
-              </div>
-
+              {/* TICKET DESCRIPTION */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <Label htmlFor="description" className="flex items-center space-x-2"><MessageSquare className="h-4 w-4" /><span>Ticket Description</span></Label>
@@ -453,7 +332,16 @@ export const TicketForm: React.FC<TicketFormProps> = ({
                     </Dialog>
                   </div>
                 </div>
-                <Textarea id="description" placeholder="Enter ticket description (HTML supported)..." value={formData.description} onChange={(e) => handleInputChange('description', e.target.value)} className="min-h-[120px] bg-muted/30 border-border focus:bg-card transition-colors" required disabled={isProcessing} />
+<Textarea 
+    id="description" 
+    placeholder="Enter ticket description (HTML supported)..." 
+    value={formData.description} 
+    onChange={(e) => handleInputChange('description', e.target.value)} 
+    // CHANGE IS HERE 👇 (min-h-[260px])
+    className="min-h-[290px] bg-muted/30 border-border focus:bg-card transition-colors" 
+    required 
+    disabled={isProcessing} 
+/>
                 <p className="text-xs text-muted-foreground">HTML formatting is supported</p>
               </div>
             </div>
