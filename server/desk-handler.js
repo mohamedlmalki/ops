@@ -114,7 +114,7 @@ const handleGetTicketComments = async (socket, data) => {
 };
 
 const handleSendSingleTicket = async (data) => {
-    const { email, subject, description, selectedProfileName, sendDirectReply, senderName } = data; // ADDED senderName
+    const { email, subject, description, selectedProfileName, sendDirectReply, senderName } = data; 
     if (!email || !selectedProfileName) return { success: false, error: 'Missing email or profile.' };
     const profiles = readProfiles();
     const activeProfile = profiles.find(p => p.profileName === selectedProfileName);
@@ -123,10 +123,11 @@ const handleSendSingleTicket = async (data) => {
         if (!activeProfile) return { success: false, error: 'Profile not found.' };
         const deskConfig = activeProfile.desk;
         
-        // --- ADDED CATEGORY/SENDER INJECTION ---
         const ticketData = { subject, description, departmentId: deskConfig.defaultDepartmentId, contact: { email }, channel: 'Email' };
+        
+        // PUSH NAME TO RESOLUTION
         if (senderName && senderName.trim() !== '') {
-            ticketData.category = senderName.trim();
+            ticketData.resolution = senderName.trim();
         }
 
         const ticketResponse = await makeApiCall('post', '/api/v1/tickets', ticketData, activeProfile, 'desk');
@@ -159,16 +160,17 @@ const handleVerifyTicketEmail = async (data) => {
 
 const handleSendTestTicket = async (socket, data) => {
     console.log(`[Desk] Sending Test Ticket to ${data.email}...`);
-    const { email, subject, description, selectedProfileName, sendDirectReply, verifyEmail, verifyDelugeLog, activeProfile, senderName } = data; // ADDED senderName
+    const { email, subject, description, selectedProfileName, sendDirectReply, verifyEmail, verifyDelugeLog, activeProfile, senderName } = data; 
      if (!email || !selectedProfileName) return socket.emit('testTicketResult', { success: false, error: 'Missing email or profile.' });
     try {
         if (!activeProfile) return socket.emit('testTicketResult', { success: false, error: 'Profile not found.' });
         const deskConfig = activeProfile.desk;
         
-        // --- ADDED CATEGORY/SENDER INJECTION ---
         const ticketData = { subject, description, departmentId: deskConfig.defaultDepartmentId, contact: { email }, channel: 'Email' };
+        
+        // PUSH NAME TO RESOLUTION
         if (senderName && senderName.trim() !== '') {
-            ticketData.category = senderName.trim();
+            ticketData.resolution = senderName.trim();
         }
 
         const ticketResponse = await makeApiCall('post', '/api/v1/tickets', ticketData, activeProfile, 'desk');
@@ -201,7 +203,7 @@ const handleSendTestTicket = async (socket, data) => {
 };
 
 const handleStartBulkCreate = async (socket, data) => {
-    const { emails, subject, description, delay, selectedProfileName, sendDirectReply, verifyEmail, verifyDelugeLog, activeProfile, stopAfterFailures = 0, senderName } = data; // ADDED senderName
+    const { emails, subject, description, delay, selectedProfileName, sendDirectReply, verifyEmail, verifyDelugeLog, activeProfile, stopAfterFailures = 0, senderName } = data; 
     
     console.log(`[Desk] Starting Bulk Job for ${selectedProfileName}. Total: ${emails.length} emails.`);
     const jobId = createJobId(socket.id, selectedProfileName, 'ticket');
@@ -234,10 +236,11 @@ const handleStartBulkCreate = async (socket, data) => {
 
             console.log(`[Desk] Processing (${i+1}/${emails.length}): ${email}`);
 
-            // --- ADDED CATEGORY/SENDER INJECTION ---
             const ticketData = { subject, description, departmentId: deskConfig.defaultDepartmentId, contact: { email }, channel: 'Email' };
+            
+            // PUSH NAME TO RESOLUTION
             if (senderName && senderName.trim() !== '') {
-                ticketData.category = senderName.trim();
+                ticketData.resolution = senderName.trim();
             }
             
             try {

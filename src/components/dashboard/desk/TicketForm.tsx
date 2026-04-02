@@ -82,6 +82,13 @@ export const TicketForm: React.FC<TicketFormProps> = ({
   const { toast } = useToast();
   const [isLoadingName, setIsLoadingName] = useState(false);
   
+  // Set default Auto-Pause to 4 if it's currently 0 or undefined
+  useEffect(() => {
+    if (!formData.stopAfterFailures && formData.stopAfterFailures !== 0) {
+        onFormDataChange({ ...formData, stopAfterFailures: 4 });
+    }
+  }, []);
+
   const handleCleanEmails = () => {
       if (!formData.emails) return;
       const raw = formData.emails;
@@ -247,7 +254,7 @@ export const TicketForm: React.FC<TicketFormProps> = ({
                 )}
               </div>
 
-              {/* MOVED: DELAY, AUTO-PAUSE, AND OPTIONAL SETTINGS */}
+              {/* GROUPED SETTINGS: DELAY, AUTO-PAUSE, AND OPTIONAL ACTIONS */}
               <div className="pt-4 border-t border-border/50">
                   <div className="grid grid-cols-2 gap-4 mb-4">
                       <div className="space-y-2">
@@ -259,7 +266,7 @@ export const TicketForm: React.FC<TicketFormProps> = ({
                       <div className="space-y-2">
                         <Label htmlFor="stopAfterFailures" className="flex items-center space-x-2"><AlertTriangle className="h-4 w-4 text-amber-500" /><span>Auto-Pause</span></Label>
                         <div className="flex items-center space-x-3">
-                          <Input id="stopAfterFailures" type="number" min="0" step="1" placeholder="0 (Disabled)" value={formData.stopAfterFailures === 0 ? '' : formData.stopAfterFailures} onChange={(e) => handleInputChange('stopAfterFailures', e.target.value === '' ? 0 : parseInt(e.target.value))} className="bg-muted/30 border-border focus:bg-card" disabled={isProcessing} />
+                          <Input id="stopAfterFailures" type="number" min="0" step="1" placeholder="0 (Disabled)" value={formData.stopAfterFailures} onChange={(e) => handleInputChange('stopAfterFailures', e.target.value === '' ? 0 : parseInt(e.target.value))} className="bg-muted/30 border-border focus:bg-card" disabled={isProcessing} />
                         </div>
                       </div>
                   </div>
@@ -281,7 +288,7 @@ export const TicketForm: React.FC<TicketFormProps> = ({
                                 <Label htmlFor="verifyDelugeLog" className="font-medium hover:cursor-pointer flex items-center">
                                     <Sparkles className="h-3 w-3 mr-1 text-green-500" /> Verify Deluge Log
                                 </Label>
-                                <p className="text-xs text-muted-foreground">Checks if your custom function executed and successfully wrote the log comment.</p>
+                                <p className="text-xs text-muted-foreground">Checks if your custom function executed successfully.</p>
                             </div>
                         </div>
                       </div>
@@ -311,7 +318,7 @@ export const TicketForm: React.FC<TicketFormProps> = ({
                     <Sparkles className="h-4 w-4 text-green-500" /><span>Sender Name (Deluge Workflow)</span>
                 </Label>
                 <Input id="senderName" placeholder="e.g., Vibrobet Support" value={formData.senderName || ''} onChange={(e) => handleInputChange('senderName', e.target.value)} className="h-10 bg-muted/30 border-border focus:bg-card transition-colors" disabled={isProcessing} />
-                <p className="text-[10px] text-muted-foreground">This injects the name into the Category field for the custom Deluge script.</p>
+                <p className="text-[10px] text-muted-foreground">This injects the name into the Resolution field for the custom Deluge script.</p>
               </div>
 
               {/* TICKET SUBJECT */}
@@ -332,17 +339,15 @@ export const TicketForm: React.FC<TicketFormProps> = ({
                     </Dialog>
                   </div>
                 </div>
-<Textarea 
-    id="description" 
-    placeholder="Enter ticket description (HTML supported)..." 
-    value={formData.description} 
-    onChange={(e) => handleInputChange('description', e.target.value)} 
-    // CHANGE IS HERE 👇 (min-h-[260px])
-    className="min-h-[290px] bg-muted/30 border-border focus:bg-card transition-colors" 
-    required 
-    disabled={isProcessing} 
-/>
-                <p className="text-xs text-muted-foreground">HTML formatting is supported</p>
+                <Textarea 
+                  id="description" 
+                  placeholder="Enter ticket description (HTML supported)..." 
+                  value={formData.description} 
+                  onChange={(e) => handleInputChange('description', e.target.value)} 
+                  className="min-h-[315px] bg-muted/30 border-border focus:bg-card transition-colors" 
+                  required 
+                  disabled={isProcessing} 
+                />
               </div>
             </div>
           </div>
