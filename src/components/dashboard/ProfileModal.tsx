@@ -45,6 +45,7 @@ const getInitialFormData = (): Profile => ({
     defaultDepartmentId: '',
     fromEmailAddress: '',
     mailReplyAddressId: '',
+	cloudflareTrackingUrl: '', // <-- ADD THIS
   },
   catalyst: {
     projectId: '',
@@ -99,6 +100,16 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
   
   const [deskMailList, setDeskMailList] = useState<any[]>([]);
   const [isDeskMailModalOpen, setIsDeskMailModalOpen] = useState(false);
+
+  // Auto-Fetch States for Zoho Qntrl
+  const [isFetchingQntrl, setIsFetchingQntrl] = useState(false);
+  const [qntrlOrgList, setQntrlOrgList] = useState<any[]>([]);
+  const [isQntrlOrgModalOpen, setIsQntrlOrgModalOpen] = useState(false);
+
+  // --- NEW: Auto-Fetch States for Zoho People ---
+  const [isFetchingPeople, setIsFetchingPeople] = useState(false);
+  const [peopleOrgList, setPeopleOrgList] = useState<any[]>([]);
+  const [isPeopleOrgModalOpen, setIsPeopleOrgModalOpen] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
@@ -176,7 +187,6 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
             const org = data.organizations[0];
             setFormData(prev => ({ ...prev, desk: { ...(prev.desk as object), orgId: org.id.toString() } }));
             
-            // Immediately chain the next request
             socket.emit('getDeskDepartments', {
                 clientId: formDataRef.current.clientId,
                 clientSecret: formDataRef.current.clientSecret,
@@ -238,6 +248,55 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
         toast({ title: "Desk Fetch Error", description: data.message, variant: "destructive" });
     };
 
+    // --- ZOHO QNTRL SOCKET HANDLERS ---
+    const handleQntrlOrgsResult = (data: { success: boolean, organizations: any[] }) => {
+        setIsFetchingQntrl(false);
+        if (!data.success || !data.organizations || data.organizations.length === 0) {
+            toast({ title: "No Organizations Found", description: "No Zoho Qntrl Orgs found.", variant: "destructive" });
+            return;
+        }
+        if (data.organizations.length === 1) {
+            const org = data.organizations[0];
+            setFormData(prev => ({ ...prev, qntrl: { ...(prev.qntrl as object), orgId: org.org_domain } }));
+            toast({ title: "Success!", description: `Qntrl Org ID auto-filled with ${org.org_domain}` });
+        } else {
+            setQntrlOrgList(data.organizations);
+            setIsQntrlOrgModalOpen(true);
+        }
+    };
+
+    const handleQntrlError = (data: { message: string }) => {
+        setIsFetchingQntrl(false);
+        toast({ title: "Qntrl Fetch Error", description: data.message, variant: "destructive" });
+    };
+
+    // --- NEW: ZOHO PEOPLE SOCKET HANDLERS ---
+    const handlePeopleOrgsResult = (data: { success: boolean, organizations: any[] }) => {
+        console.log("[FRONTEND LOG] Received People Organizations result from server:", data);
+        setIsFetchingPeople(false);
+        if (!data.success || !data.organizations || data.organizations.length === 0) {
+            toast({ title: "No Organizations Found", description: "No Zoho People Orgs found in this account.", variant: "destructive" });
+            return;
+        }
+        
+        if (data.organizations.length === 1) {
+            const org = data.organizations[0];
+            // Look for common ID fields in People (zoid, organizationId) or fallback to Company string
+            const orgId = org.zoid || org.organizationId || org.id || org.Company || 'UNKNOWN_ID';
+            setFormData(prev => ({ ...prev, people: { ...(prev.people as object), orgId: orgId.toString() } }));
+            toast({ title: "Success!", description: `People Org ID auto-filled with: ${orgId}` });
+        } else {
+            setPeopleOrgList(data.organizations);
+            setIsPeopleOrgModalOpen(true);
+        }
+    };
+
+    const handlePeopleError = (data: { message: string }) => {
+        console.error("[FRONTEND LOG] People Fetch Error:", data.message);
+        setIsFetchingPeople(false);
+        toast({ title: "People Fetch Error", description: data.message, variant: "destructive" });
+    };
+
     socket.on('zoho-refresh-token', handleTokenReceived);
     socket.on('zoho-refresh-token-error', handleTokenError);
     socket.on('projectsPortalsResult', handlePortalsResult);
@@ -250,6 +309,12 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
     socket.on('deskDepartmentsError', handleDeskError);
     socket.on('deskMailAddressesError', handleDeskError);
 
+    socket.on('qntrlOrganizationsResult', handleQntrlOrgsResult);
+    socket.on('qntrlOrganizationsError', handleQntrlError);
+
+    socket.on('peopleOrganizationsResult', handlePeopleOrgsResult);
+    socket.on('peopleOrganizationsError', handlePeopleError);
+
     return () => {
       socket.off('zoho-refresh-token', handleTokenReceived);
       socket.off('zoho-refresh-token-error', handleTokenError);
@@ -261,6 +326,10 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
       socket.off('deskOrganizationsError', handleDeskError);
       socket.off('deskDepartmentsError', handleDeskError);
       socket.off('deskMailAddressesError', handleDeskError);
+      socket.off('qntrlOrganizationsResult', handleQntrlOrgsResult);
+      socket.off('qntrlOrganizationsError', handleQntrlError);
+      socket.off('peopleOrganizationsResult', handlePeopleOrgsResult);
+      socket.off('peopleOrganizationsError', handlePeopleError);
     };
   }, [socket, isOpen, toast]);
 
@@ -367,6 +436,36 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
     });
   };
 
+  const handleFetchQntrl = () => {
+    if (!formData.clientId || !formData.clientSecret || !formData.refreshToken) {
+        toast({ title: "Missing Credentials", description: "Generate a Refresh Token first.", variant: "destructive" });
+        return;
+    }
+    setIsFetchingQntrl(true);
+    socket?.emit('getQntrlOrganizations', {
+        clientId: formData.clientId,
+        clientSecret: formData.clientSecret,
+        refreshToken: formData.refreshToken
+    });
+  };
+
+  // --- NEW: FETCH PEOPLE ---
+  const handleFetchPeople = () => {
+    console.log("[FRONTEND LOG] Fetch People button clicked!");
+    if (!formData.clientId || !formData.clientSecret || !formData.refreshToken) {
+        console.warn("[FRONTEND LOG] Missing credentials. Aborting.");
+        toast({ title: "Missing Credentials", description: "Generate a Refresh Token first.", variant: "destructive" });
+        return;
+    }
+    setIsFetchingPeople(true);
+    console.log("[FRONTEND LOG] Emitting 'getPeopleOrganizations' to server...");
+    socket?.emit('getPeopleOrganizations', {
+        clientId: formData.clientId,
+        clientSecret: formData.clientSecret,
+        refreshToken: formData.refreshToken
+    });
+  };
+
   return (
     <>
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -440,6 +539,14 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
                     <Label htmlFor="mailReplyAddressId" className="text-right">Mail Reply ID</Label>
                     <Input id="mailReplyAddressId" name="mailReplyAddressId" value={formData.desk?.mailReplyAddressId || ''} onChange={(e) => handleNestedChange('desk', e)} className="col-span-3" placeholder="(Optional)" />
                     </div>
+					{/* NEW CLOUDFLARE TRACKING INPUT */}
+                    <div className="grid grid-cols-4 items-center gap-4">
+                        <Label htmlFor="cloudflareTrackingUrl" className="text-right flex flex-col">
+                            <span>Tracker URL</span>
+                            <span className="text-[9px] text-muted-foreground">Cloudflare Worker</span>
+                        </Label>
+                        <Input id="cloudflareTrackingUrl" name="cloudflareTrackingUrl" value={formData.desk?.cloudflareTrackingUrl || ''} onChange={(e) => handleNestedChange('desk', e)} className="col-span-3" placeholder="https://zoho-tracker...workers.dev" />
+                    </div>
                 </div>
               </div>
              
@@ -470,7 +577,13 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
                 <div className="grid gap-4 pl-4 border-l-2 ml-2">
                     <div className="grid grid-cols-4 items-center gap-4">
                     <Label htmlFor="people_orgId" className="text-right">Org ID</Label>
-                    <Input id="people_orgId" name="orgId" value={formData.people?.orgId || ''} onChange={(e) => handleNestedChange('people', e)} className="col-span-3" placeholder="(Optional) e.g., 89740123" />
+                    <div className="col-span-3 flex items-center gap-2">
+                        <Input id="people_orgId" name="orgId" value={formData.people?.orgId || ''} onChange={(e) => handleNestedChange('people', e)} className="flex-1" placeholder="(Optional) e.g., 89740123" />
+                        <Button type="button" variant="outline" size="sm" onClick={handleFetchPeople} disabled={isFetchingPeople}>
+                            {isFetchingPeople ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+                            <span className="ml-2 hidden sm:inline">Fetch</span>
+                        </Button>
+                    </div>
                     </div>
                 </div>
               </div>
@@ -531,7 +644,13 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
                 <div className="grid gap-4 pl-4 border-l-2 ml-2">
                     <div className="grid grid-cols-4 items-center gap-4">
                     <Label htmlFor="qntrl_orgId" className="text-right">Org ID</Label>
-                    <Input id="qntrl_orgId" name="orgId" value={formData.qntrl?.orgId || ''} onChange={(e) => handleNestedChange('qntrl', e)} className="col-span-3" />
+                    <div className="col-span-3 flex items-center gap-2">
+                        <Input id="qntrl_orgId" name="orgId" value={formData.qntrl?.orgId || ''} onChange={(e) => handleNestedChange('qntrl', e)} className="flex-1" placeholder="e.g., marionere" />
+                        <Button type="button" variant="outline" size="sm" onClick={handleFetchQntrl} disabled={isFetchingQntrl}>
+                            {isFetchingQntrl ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+                            <span className="ml-2 hidden sm:inline">Fetch</span>
+                        </Button>
+                    </div>
                     </div>
                 </div>
               </div>
@@ -585,7 +704,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
                         <Input id="projects_portalId" name="portalId" value={formData.projects?.portalId || ''} onChange={(e) => handleNestedChange('projects', e)} className="flex-1" />
                         <Button type="button" variant="outline" size="sm" onClick={handleFetchPortals} disabled={isFetchingPortals}>
                             {isFetchingPortals ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-                            <span className="ml-2">Fetch</span>
+                            <span className="ml-2 hidden sm:inline">Fetch</span>
                         </Button>
                     </div>
                     </div>
@@ -674,6 +793,37 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
             }));
             setIsDeskMailModalOpen(false);
             toast({ title: "Success!", description: "Zoho Desk details filled successfully." });
+        }}
+    />
+
+    {/* ZOHO QNTRL SELECTOR MODAL */}
+    <GenericSelectorModal
+        isOpen={isQntrlOrgModalOpen}
+        onClose={() => setIsQntrlOrgModalOpen(false)}
+        title="Select Zoho Qntrl Organization"
+        description="Multiple organizations found. Please select one."
+        items={qntrlOrgList}
+        displayKey="org_name"
+        onSelect={(org) => {
+            setFormData(prev => ({ ...prev, qntrl: { ...(prev.qntrl as object), orgId: org.org_domain } }));
+            setIsQntrlOrgModalOpen(false);
+            toast({ title: "Success!", description: `Qntrl Org ID filled with ${org.org_domain}` });
+        }}
+    />
+
+    {/* ZOHO PEOPLE SELECTOR MODAL */}
+    <GenericSelectorModal
+        isOpen={isPeopleOrgModalOpen}
+        onClose={() => setIsPeopleOrgModalOpen(false)}
+        title="Select Zoho People Organization"
+        description="Multiple organizations found. Please select one."
+        items={peopleOrgList}
+        displayKey="Company"
+        onSelect={(org) => {
+            const orgId = org.zoid || org.organizationId || org.id || org.Company || 'UNKNOWN_ID';
+            setFormData(prev => ({ ...prev, people: { ...(prev.people as object), orgId: orgId.toString() } }));
+            setIsPeopleOrgModalOpen(false);
+            toast({ title: "Success!", description: `People Org ID filled with ${orgId}` });
         }}
     />
     </>

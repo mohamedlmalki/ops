@@ -4,7 +4,7 @@ import { cn } from '@/lib/utils';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-// 🔥 ADDED ChevronLeft and ChevronRight here
+// 櫨 ADDED ChevronLeft and ChevronRight here
 import { User, Building, AlertCircle, CheckCircle, Loader, RefreshCw, Activity, Edit, Trash2, PauseCircle, CheckCircle2, StopCircle, XCircle, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Socket } from 'socket.io-client';
 import { Profile, Jobs as TicketJobs, InvoiceJobs, CatalystJobs, EmailJobs, QntrlJobs, PeopleJobs, CreatorJobs, ProjectsJobs, WebinarJobs, FsmContactJobs, BookingJobs } from '@/App'; 
@@ -82,7 +82,7 @@ export const ProfileSelector: React.FC<ProfileSelectorProps> = ({
     return strictlyFiltered;
   }, [profiles, service]);
 
-  // 🔥 FIX: Calculate the current index to manage the left/right arrows
+  // 櫨 FIX: Calculate the current index to manage the left/right arrows
   const currentIndex = useMemo(() => {
     if (!selectedProfile) return -1;
     return filteredProfiles.findIndex(p => p.profileName === selectedProfile.profileName);
@@ -175,7 +175,7 @@ export const ProfileSelector: React.FC<ProfileSelectorProps> = ({
         {/* --- ROW 1: DROPDOWN & ICONS --- */}
         <div className="flex items-center gap-2">
           
-          {/* 🔥 NEW: Left Arrow Button */}
+          {/* 櫨 NEW: Left Arrow Button */}
           <Button 
             variant="outline" 
             size="icon" 
@@ -249,7 +249,7 @@ export const ProfileSelector: React.FC<ProfileSelectorProps> = ({
             </Select>
           </div>
 
-          {/* 🔥 NEW: Right Arrow Button */}
+          {/* 櫨 NEW: Right Arrow Button */}
           <Button 
             variant="outline" 
             size="icon" 
@@ -295,15 +295,37 @@ export const ProfileSelector: React.FC<ProfileSelectorProps> = ({
           <div className="flex items-center gap-2">
             {apiStatus && apiStatus.status === 'success' && apiStatus.fullResponse?.agentInfo && (
                 <div className="flex items-center gap-4 bg-muted/40 border border-border px-3 py-1.5 rounded-md text-xs whitespace-nowrap shrink-0 shadow-sm">
+                    {/* Agent Name */}
                     <span className="flex items-center gap-1.5">
                         <span className="text-muted-foreground font-semibold">Agent Name:</span> 
-                        <span className="font-medium text-foreground">{apiStatus.fullResponse.agentInfo.firstName} {apiStatus.fullResponse.agentInfo.lastName}</span>
+                        <span className="font-medium text-foreground">
+                            {(`${apiStatus.fullResponse.agentInfo.firstName || ''} ${apiStatus.fullResponse.agentInfo.lastName || ''}`).trim() || apiStatus.fullResponse.agentInfo.name}
+                        </span>
                     </span>
-                    <div className="w-px h-3 bg-border"></div>
-                    <span className="flex items-center gap-1.5">
-                        <span className="text-muted-foreground font-semibold">Organization:</span> 
-                        <span className="font-medium text-foreground">{apiStatus.fullResponse.orgName}</span>
-                    </span>
+
+                    {/* NEW: Agent Email */}
+                    {apiStatus.fullResponse.agentInfo.emailId && (
+                        <>
+                            <div className="w-px h-3 bg-border"></div>
+                            <span className="flex items-center gap-1.5">
+                                <span className="text-muted-foreground font-semibold">Email:</span> 
+                                <span className="font-medium text-foreground">{apiStatus.fullResponse.agentInfo.emailId}</span>
+                            </span>
+                        </>
+                    )}
+
+                    {/* Organization (Only shown if available in response) */}
+                    {apiStatus.fullResponse.orgName && (
+                        <>
+                            <div className="w-px h-3 bg-border"></div>
+                            <span className="flex items-center gap-1.5">
+                                <span className="text-muted-foreground font-semibold">Organization:</span> 
+                                <span className="font-medium text-foreground">{apiStatus.fullResponse.orgName}</span>
+                            </span>
+                        </>
+                    )}
+
+                    {/* Portal */}
                     {apiStatus.fullResponse.portalName && (
                        <>
                           <div className="w-px h-3 bg-border"></div>

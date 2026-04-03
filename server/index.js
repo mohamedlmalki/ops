@@ -61,7 +61,7 @@ app.post('/api/zoho/auth', (req, res) => {
     const combinedScopes = [
         'Desk.tickets.ALL,Desk.settings.ALL,Desk.basic.READ',
         'ZohoCatalyst.projects.users.CREATE,ZohoCatalyst.projects.users.READ,ZohoCatalyst.projects.users.DELETE,ZohoCatalyst.email.CREATE',
-        'Qntrl.job.ALL,Qntrl.user.READ,Qntrl.layout.ALL',
+        'Qntrl.job.ALL,Qntrl.user.READ,Qntrl.layout.ALL,Qntrl.org.READ',
         'ZOHOPEOPLE.organization.READ,ZOHOPEOPLE.employee.ALL,ZOHOPEOPLE.forms.ALL',
         'ZohoCreator.form.CREATE,ZohoCreator.report.CREATE,ZohoCreator.report.READ,ZohoCreator.report.UPDATE,ZohoCreator.report.DELETE,ZohoCreator.meta.form.READ,ZohoCreator.meta.application.READ,ZohoCreator.dashboard.READ',
         'ZohoProjects.tasklists.READ',
@@ -158,6 +158,27 @@ app.get('/api/zoho/callback', async (req, res) => {
 });
 
 // --- REST ENDPOINTS ---
+
+// NEW: CLOUDFLARE WEBHOOK CATCHER
+app.post('/api/webhooks/tracking', (req, res) => {
+    try {
+        // Protect your server from strangers!
+        if (req.headers['x-tracking-secret'] !== 'eygirl-secret-key-2026') {
+            return res.status(403).json({ error: 'Unauthorized' });
+        }
+
+        const { email, ticketId, openedAt, device } = req.body;
+        console.log(`\n[TRACKING] 👁️  EMAIL OPENED! Email: ${email} | Device: ${device}`);
+
+        // Broadcast to your React dashboard instantly
+        io.emit('emailOpened', { email, ticketId, openedAt, device });
+
+        res.status(200).send('OK');
+    } catch (error) {
+        res.status(500).send('Webhook Error');
+    }
+});
+
 app.post('/api/tickets/single', async (req, res) => {
     try {
         const result = await deskHandler.handleSendSingleTicket(req.body);
@@ -340,7 +361,6 @@ app.delete('/api/profiles/:profileNameToDelete', (req, res) => {
 io.on('connection', (socket) => {
     console.log(`[INFO] New connection. Socket ID: ${socket.id}`);
 
-    // 🔥 FIX: Return the currently active jobs back to the frontend to fix stuck states
     socket.on('requestActiveJobs', () => {
         socket.emit('activeJobsSync', Object.keys(activeJobs));
     });
@@ -451,14 +471,12 @@ io.on('connection', (socket) => {
         if (activeJobs[jobId]) activeJobs[jobId].status = 'paused';
     });
 
-    // 🔥 THE RESUME FIX IS HERE
     socket.on('resumeJob', ({ profileName, jobType }) => {
         const jobId = createJobId(socket.id, profileName, jobType);
         if (activeJobs[jobId]) {
             activeJobs[jobId].status = 'running';
-            activeJobs[jobId].consecutiveFailures = 0; // IMPORTANT: Reset errors so it doesn't instantly re-pause
+            activeJobs[jobId].consecutiveFailures = 0; 
         } else {
-            // Smart Session Protection: Tell the frontend if the backend job was killed by a page refresh
             socket.emit('bulkError', { 
                 profileName, 
                 jobType, 
@@ -473,12 +491,11 @@ io.on('connection', (socket) => {
         if (activeJobs[jobId]) activeJobs[jobId].status = 'ended';
     });
 
-    // 🔥 FIX: We no longer delete jobs when a tab refreshes/disconnects!
     socket.on('disconnect', () => {
         console.log(`[INFO] Socket disconnected: ${socket.id}. Jobs will remain active in background.`);
     });
 
-    // Desk Auto-Fetch API Handlers
+    // --- AUTO-FETCH API HANDLERS (Unauthenticated profiles allowed) ---
     socket.on('getDeskOrganizations', (data) => {
         deskHandler.handleGetDeskOrganizations(socket, data);
     });
@@ -488,19 +505,26 @@ io.on('connection', (socket) => {
     socket.on('getDeskMailAddresses', (data) => {
         deskHandler.handleGetDeskMailAddresses(socket, data);
     });
-
     socket.on('getProjectsPortals', (data) => {
         projectsHandler.handleGetPortals(socket, data);
     });
-	
+    // NEW: QNTRL AUTO-FETCH
+    socket.on('getQntrlOrganizations', (data) => {
+        qntrlHandler.handleGetQntrlOrganizations(socket, data);
+    });
+    // NEW: PEOPLE AUTO-FETCH
+    socket.on('getPeopleOrganizations', (data) => {
+        console.log(`\n[INDEX LOG] Socket event 'getPeopleOrganizations' triggered! Routing to peopleHandler...`);
+        peopleHandler.handleGetPeopleOrganizations(socket, data);
+    });
+
+    // --- Service-specific Listeners ---
     socket.on('deleteBookingService', (data) => {
         const profiles = readProfiles();
         const activeProfile = data ? profiles.find(p => p.profileName === data.selectedProfileName) : null;
         if (activeProfile) { bookingsHandler.handleDeleteBookingService(socket, { ...data, activeProfile }); } 
         else { socket.emit('deleteBookingServiceResult', { success: false, error: "Profile not found." }); }
     });
-
-    // --- Service-specific Listeners ---
     
     const deskListeners = { 'startBulkCreate': deskHandler.handleStartBulkCreate, 'getEmailFailures': deskHandler.handleGetEmailFailures, 'clearEmailFailures': deskHandler.handleClearEmailFailures, 'clearTicketLogs': (socket) => require('./utils').writeToTicketLog([]), 'getMailReplyAddressDetails': deskHandler.handleGetMailReplyAddressDetails, 'updateMailReplyAddressDetails': deskHandler.handleUpdateMailReplyAddressDetails };
     for (const [event, handler] of Object.entries(deskListeners)) { socket.on(event, (data) => { const profiles = readProfiles(); const activeProfile = data ? profiles.find(p => p.profileName === data.selectedProfileName) : null; if (activeProfile) handler(socket, { ...data, activeProfile }); }); }
@@ -518,7 +542,6 @@ io.on('connection', (socket) => {
     for (const [event, handler] of Object.entries(creatorListeners)) { socket.on(event, (data) => { const profiles = readProfiles(); const activeProfile = data ? profiles.find(p => p.profileName === data.selectedProfileName) : null; if (activeProfile) { if (typeof handler === 'function') { handler(socket, { ...data, activeProfile }); } else { socket.emit('bulkError', { message: `Server error: Event ${event} is not configured.` }); } } else { socket.emit('bulkError', { message: 'Active profile not found.' }); } }); }
 
     const projectsListeners = { 
-        'getProjectsPortals': projectsHandler.handleGetPortals, 
         'getProjectsProjects': projectsHandler.handleGetProjects, 
         'getProjectsTaskLists': projectsHandler.handleGetTaskLists, 
         'getProjectsTasks': projectsHandler.handleGetTasks, 
@@ -540,11 +563,7 @@ io.on('connection', (socket) => {
                     socket.emit('bulkError', { message: `Server error: Event ${event} is not configured.'` }); 
                 } 
             } else { 
-                if(event !== 'getProjectsPortals') { 
-                    socket.emit('bulkError', { message: 'Active profile not found.' }); 
-                } else { 
-                    handler(socket, data); 
-                } 
+                socket.emit('bulkError', { message: 'Active profile not found.' }); 
             } 
         }); 
     }

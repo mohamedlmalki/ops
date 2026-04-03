@@ -96,6 +96,21 @@ const handler = {
         activeJobs = jobs;
     },
 
+    // --- NEW: AUTO FETCH ORGS ---
+    handleGetQntrlOrganizations: async (socket, data) => {
+        try {
+            // Support passing bare credentials when profile isn't saved yet
+            const profile = data.activeProfile || data.profile || data;
+            const response = await makeApiCall('get', '/blueprint/api/org', null, profile, 'qntrl');
+            
+            // Qntrl usually returns the array directly, or inside data
+            const orgs = Array.isArray(response.data) ? response.data : response.data?.data || [];
+            socket.emit('qntrlOrganizationsResult', { success: true, organizations: orgs });
+        } catch (error) {
+            socket.emit('qntrlOrganizationsError', { success: false, message: parseError(error).message });
+        }
+    },
+
     handleGetForms: async (socket, data) => {
         try {
             const { activeProfile } = data;
@@ -186,7 +201,7 @@ const handler = {
         console.log(`[INFO] Starting bulk Qntrl card creation for ${selectedProfileName}. Job ID: ${jobId}`);
         activeJobs[jobId] = { status: 'running', total: totalToProcess, processed: 0 };
         
-        let consecutiveFailures = 0; // 🟢 TRACK FAILURES
+        let consecutiveFailures = 0; 
 
         try {
             const orgId = activeProfile.qntrl?.orgId;
@@ -202,7 +217,6 @@ const handler = {
             for (const primaryValue of primaryValues) {
                 if (!activeJobs[jobId] || activeJobs[jobId].status === 'ended') break;
 
-                // 🟢 HANDLE PAUSE / RESUME LOGIC
                 if (activeJobs[jobId].status === 'paused') {
                     consecutiveFailures = 0; 
                 }
@@ -221,7 +235,6 @@ const handler = {
 
                 const result = await createCardApiCall(cardData, selectedFormId, activeProfile, orgId, fieldMap);
 
-                // 🟢 INCREMENT OR RESET FAILURES
                 if (result.success) {
                     consecutiveFailures = 0;
                 } else {
@@ -234,7 +247,6 @@ const handler = {
                     profileName: selectedProfileName
                 });
 
-                // 🟢 AUTO-PAUSE IF LIMIT REACHED
                 if (!result.success && stopAfterFailures > 0 && consecutiveFailures >= stopAfterFailures) {
                     activeJobs[jobId].status = 'paused';
                     socket.emit('jobPaused', {

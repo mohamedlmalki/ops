@@ -32,7 +32,7 @@ const getValidAccessToken = async (profile, service) => {
     const scopes = {
         desk: 'Desk.tickets.ALL,Desk.settings.ALL,Desk.basic.READ',
         catalyst: 'ZohoCatalyst.projects.users.CREATE,ZohoCatalyst.projects.users.READ,ZohoCatalyst.projects.users.DELETE,ZohoCatalyst.email.CREATE',
-        qntrl: 'Qntrl.job.ALL,Qntrl.user.READ,Qntrl.layout.ALL',
+        qntrl: 'Qntrl.job.ALL,Qntrl.user.READ,Qntrl.layout.ALL,Qntrl.org.READ',
         people: 'ZOHOPEOPLE.organization.READ,ZOHOPEOPLE.employee.ALL,ZOHOPEOPLE.forms.ALL',
         creator: 'ZohoCreator.form.CREATE,ZohoCreator.report.CREATE,ZohoCreator.report.READ,ZohoCreator.report.UPDATE,ZohoCreator.report.DELETE,ZohoCreator.meta.form.READ,ZohoCreator.meta.application.READ,ZohoCreator.dashboard.READ',
         projects: 'ZohoProjects.portals.ALL,ZohoProjects.projects.ALL,ZohoProjects.tasklists.ALL,ZohoProjects.tasks.ALL,ZohoProjects.custom_fields.READ,ZohoProjects.custom_fields.CREATE',

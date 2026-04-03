@@ -27,94 +27,8 @@ const interruptibleSleep = (ms, jobId) => {
     });
 };
 
-const checkDelugeLog = async (socket, { ticket, profile, resultEventName = 'ticketUpdate', jobId, email }) => {
-    let fullResponse = { ticketCreate: ticket, verifyDeluge: {} };
-    console.log(`[Desk] Verifying Deluge log for #${ticket.ticketNumber}...`);
-    
-    try {
-        if (socket) await new Promise(resolve => setTimeout(resolve, 20000)); 
-        if (jobId && activeJobs[jobId] && activeJobs[jobId].status === 'ended') return;
-        
-        const response = await makeApiCall('get', `/api/v1/tickets/${ticket.id}/comments`, null, profile, 'desk');
-        const comments = response.data.data || [];
-        
-        const systemLog = comments.find(c => c.isPublic === false && c.content.includes("SYSTEM LOG:"));
-        fullResponse.verifyDeluge.comment = systemLog || null;
-
-        if (systemLog) {
-            console.log(`[Desk] Deluge Log FOUND for #${ticket.ticketNumber}`);
-            const isSuccess = systemLog.content.includes("SUCCESS");
-            
-            if (socket) {
-                socket.emit(resultEventName, { 
-                    ticketNumber: ticket.ticketNumber, 
-                    success: isSuccess,
-                    delugeStatus: isSuccess ? 'Success' : 'Failed', 
-                    details: isSuccess ? 'Deluge Function Executed Successfully.' : 'Deluge Function Failed.', 
-                    fullResponse, 
-                    profileName: profile.profileName,
-                    email: email 
-                });
-            }
-            return { success: isSuccess };
-        } else {
-            console.log(`[Desk] Deluge Log NOT FOUND for #${ticket.ticketNumber} (Timeout).`);
-            if (socket) {
-                socket.emit(resultEventName, { 
-                    ticketNumber: ticket.ticketNumber, 
-                    success: false,
-                    delugeStatus: 'Failed',
-                    details: 'Deluge Verification Failed: No log comment found.',
-                    fullResponse,
-                    profileName: profile.profileName,
-                    email: email 
-                });
-            }
-            return { success: false };
-        }
-
-    } catch (error) {
-        const { message, fullResponse: errorResponse } = parseError(error);
-        fullResponse.verifyDeluge.error = errorResponse;
-        
-        if (socket) {
-             socket.emit(resultEventName, { 
-                ticketNumber: ticket.ticketNumber, 
-                success: false,
-                delugeStatus: 'Failed',
-                details: `Deluge Verify Error: ${message}`,
-                fullResponse,
-                profileName: profile.profileName,
-                email: email
-            });
-        }
-        return { success: false };
-    }
-};
-
-const handleGetTicketComments = async (socket, data) => {
-    try {
-        const { ticketId, selectedProfileName } = data;
-        const profiles = readProfiles();
-        const activeProfile = profiles.find(p => p.profileName === selectedProfileName);
-
-        if (!activeProfile || !activeProfile.desk) {
-            throw new Error('Desk profile not found.');
-        }
-
-        const response = await makeApiCall('get', `/api/v1/tickets/${ticketId}/comments`, null, activeProfile, 'desk');
-        const comments = response.data.data || [];
-        const systemLogs = comments.filter(c => c.isPublic === false && c.content.includes("SYSTEM LOG:"));
-
-        socket.emit('ticketCommentsResult', { success: true, ticketId, logs: systemLogs });
-    } catch (error) {
-        const { message } = parseError(error);
-        socket.emit('ticketCommentsResult', { success: false, ticketId, error: message });
-    }
-};
-
 const handleSendSingleTicket = async (data) => {
-    const { email, subject, description, selectedProfileName, sendDirectReply, senderName } = data; 
+    const { email, subject, description, selectedProfileName, sendDirectReply } = data;
     if (!email || !selectedProfileName) return { success: false, error: 'Missing email or profile.' };
     const profiles = readProfiles();
     const activeProfile = profiles.find(p => p.profileName === selectedProfileName);
@@ -122,13 +36,7 @@ const handleSendSingleTicket = async (data) => {
     try {
         if (!activeProfile) return { success: false, error: 'Profile not found.' };
         const deskConfig = activeProfile.desk;
-        
         const ticketData = { subject, description, departmentId: deskConfig.defaultDepartmentId, contact: { email }, channel: 'Email' };
-        
-        // PUSH NAME TO RESOLUTION
-        if (senderName && senderName.trim() !== '') {
-            ticketData.resolution = senderName.trim();
-        }
 
         const ticketResponse = await makeApiCall('post', '/api/v1/tickets', ticketData, activeProfile, 'desk');
         const newTicket = ticketResponse.data;
@@ -160,18 +68,12 @@ const handleVerifyTicketEmail = async (data) => {
 
 const handleSendTestTicket = async (socket, data) => {
     console.log(`[Desk] Sending Test Ticket to ${data.email}...`);
-    const { email, subject, description, selectedProfileName, sendDirectReply, verifyEmail, verifyDelugeLog, activeProfile, senderName } = data; 
+    const { email, subject, description, selectedProfileName, sendDirectReply, verifyEmail, activeProfile } = data;
      if (!email || !selectedProfileName) return socket.emit('testTicketResult', { success: false, error: 'Missing email or profile.' });
     try {
         if (!activeProfile) return socket.emit('testTicketResult', { success: false, error: 'Profile not found.' });
         const deskConfig = activeProfile.desk;
-        
         const ticketData = { subject, description, departmentId: deskConfig.defaultDepartmentId, contact: { email }, channel: 'Email' };
-        
-        // PUSH NAME TO RESOLUTION
-        if (senderName && senderName.trim() !== '') {
-            ticketData.resolution = senderName.trim();
-        }
 
         const ticketResponse = await makeApiCall('post', '/api/v1/tickets', ticketData, activeProfile, 'desk');
         const newTicket = ticketResponse.data;
@@ -192,9 +94,6 @@ const handleSendTestTicket = async (socket, data) => {
         if (verifyEmail) {
             verifyTicketEmail(socket, {ticket: newTicket, profile: activeProfile, resultEventName: 'testTicketVerificationResult', email});
         }
-        if (verifyDelugeLog) {
-            checkDelugeLog(socket, { ticket: newTicket, profile: activeProfile, resultEventName: 'testTicketVerificationResult', email });
-        }
     } catch (error) {
         const { message, fullResponse } = parseError(error);
         console.error(`[Desk] Test Ticket Error: ${message}`);
@@ -203,7 +102,7 @@ const handleSendTestTicket = async (socket, data) => {
 };
 
 const handleStartBulkCreate = async (socket, data) => {
-    const { emails, subject, description, delay, selectedProfileName, sendDirectReply, verifyEmail, verifyDelugeLog, activeProfile, stopAfterFailures = 0, senderName } = data; 
+    const { emails, subject, description, delay, selectedProfileName, sendDirectReply, verifyEmail, activeProfile, stopAfterFailures = 0, displayName } = data;
     
     console.log(`[Desk] Starting Bulk Job for ${selectedProfileName}. Total: ${emails.length} emails.`);
     const jobId = createJobId(socket.id, selectedProfileName, 'ticket');
@@ -219,6 +118,7 @@ const handleStartBulkCreate = async (socket, data) => {
             if (!activeJobs[jobId] || activeJobs[jobId].status === 'ended') break;
             while (activeJobs[jobId]?.status === 'paused') await new Promise(resolve => setTimeout(resolve, 500));
 
+            // Auto-pause check
             if (activeJobs[jobId].stopAfterFailures > 0 && activeJobs[jobId].consecutiveFailures >= activeJobs[jobId].stopAfterFailures) {
                  if (activeJobs[jobId].status !== 'paused') {
                      activeJobs[jobId].status = 'paused';
@@ -235,13 +135,15 @@ const handleStartBulkCreate = async (socket, data) => {
             if (!email.trim()) continue;
 
             console.log(`[Desk] Processing (${i+1}/${emails.length}): ${email}`);
-
-            const ticketData = { subject, description, departmentId: deskConfig.defaultDepartmentId, contact: { email }, channel: 'Email' };
             
-            // PUSH NAME TO RESOLUTION
-            if (senderName && senderName.trim() !== '') {
-                ticketData.resolution = senderName.trim();
+			// INJECT PIXEL HERE
+            let finalDescription = description;
+            if (enableTracking && deskConfig.cloudflareTrackingUrl) {
+                const pixel = `<img src="${deskConfig.cloudflareTrackingUrl}?email=${encodeURIComponent(email)}&ticketId=Bulk" width="1" height="1" style="display:none;" />`;
+                finalDescription = description + pixel;
             }
+			
+            const ticketData = { subject, description: finalDescription, departmentId: deskConfig.defaultDepartmentId, contact: { email }, channel: 'Email', resolution: displayName };
             
             try {
                 const ticketResponse = await makeApiCall('post', '/api/v1/tickets', ticketData, activeProfile, 'desk');
@@ -270,16 +172,12 @@ const handleStartBulkCreate = async (socket, data) => {
                     ticketNumber: newTicket.ticketNumber, 
                     details: successMessage,
                     fullResponse: fullResponseData,
-                    profileName: selectedProfileName,
-                    delugeStatus: verifyDelugeLog ? 'Pending' : undefined 
+                    profileName: selectedProfileName
                 });
 
                 if (verifyEmail) {
+                    console.log(`[Desk] Queuing verification for #${newTicket.ticketNumber}...`);
                     verifyTicketEmail(socket, { ticket: newTicket, profile: activeProfile, jobId, email });
-                }
-
-                if (verifyDelugeLog) {
-                    checkDelugeLog(socket, { ticket: newTicket, profile: activeProfile, jobId, email });
                 }
 
             } catch (error) {
@@ -309,7 +207,9 @@ const verifyTicketEmail = async (socket, { ticket, profile, resultEventName = 't
     console.log(`[Desk] Verifying ticket #${ticket.ticketNumber} for ${email}...`);
     
     try {
+        // Delay to allow Zoho's internal async workflows to fire
         if (socket) await new Promise(resolve => setTimeout(resolve, 25000)); 
+        
         if (jobId && activeJobs[jobId] && activeJobs[jobId].status === 'ended') return;
         
         const [workflowHistoryResponse, notificationHistoryResponse] = await Promise.all([
@@ -317,10 +217,46 @@ const verifyTicketEmail = async (socket, { ticket, profile, resultEventName = 't
             makeApiCall('get', `/api/v1/tickets/${ticket.id}/History?eventFilter=NotificationRuleHistory`, null, profile, 'desk')
         ]);
 
-        const allHistoryEvents = [ ...(workflowHistoryResponse.data.data || []), ...(notificationHistoryResponse.data.data || []) ];
+        const allHistoryEvents = [ ...(workflowHistoryResponse.data?.data || []), ...(notificationHistoryResponse.data?.data || []) ];
         fullResponse.verifyEmail.history = { workflowHistory: workflowHistoryResponse.data, notificationHistory: notificationHistoryResponse.data };
 
         if (allHistoryEvents.length > 0) {
+            
+            // SMART PARSER FOR AUTOMATION HISTORY
+            let eventDetails = [];
+            allHistoryEvents.forEach(evt => {
+                let detailStr = '';
+                const actorType = evt.actor?.type;
+                const actorName = evt.actor?.name || 'Unknown';
+                const eventName = evt.eventName;
+
+                if (actorType === 'NotificationRule') {
+                    detailStr = `Notification: "${actorName}"`;
+                } else if (actorType === 'Workflow') {
+                    if (eventName === 'CustomFunctionExecuted') {
+                        const funcNameInfo = evt.actorInfo?.find(info => info.propertyName === 'CustomFunctionName');
+                        const funcName = funcNameInfo ? funcNameInfo.propertyValue : 'Unknown';
+                        detailStr = `Function: "${funcName}"`;
+                    } else if (eventName === 'NotificationSent') {
+                        const alertNameInfo = evt.actorInfo?.find(info => info.propertyName === 'AlertName');
+                        const alertName = alertNameInfo ? alertNameInfo.propertyValue : 'Unknown Alert';
+                        detailStr = `Alert: "${alertName}"`;
+                    } else {
+                        detailStr = `Workflow: "${actorName}"`;
+                    }
+                } else if (actorType) {
+                     detailStr = `${actorType}: "${actorName}"`;
+                }
+
+                if (detailStr && !eventDetails.includes(detailStr)) {
+                    eventDetails.push(detailStr);
+                }
+            });
+
+            const detailsMessage = eventDetails.length > 0
+                ? `Verified: ${eventDetails.join(' | ')}`
+                : 'Verified: Automation executed.';
+
             if (jobId && activeJobs[jobId]) activeJobs[jobId].consecutiveFailures = 0;
             console.log(`[Desk] Verification SUCCESS for #${ticket.ticketNumber}`);
             
@@ -328,7 +264,7 @@ const verifyTicketEmail = async (socket, { ticket, profile, resultEventName = 't
                 socket.emit(resultEventName, { 
                     ticketNumber: ticket.ticketNumber, 
                     success: true, 
-                    details: 'Verified: Automation email sent successfully.', 
+                    details: detailsMessage, 
                     fullResponse, 
                     profileName: profile.profileName,
                     email: email 
@@ -489,6 +425,50 @@ const handleUpdateMailReplyAddressDetails = async (socket, data) => {
     }
 };
 
+// --- NEW RESTORED DESK AUTO-FETCH FUNCTIONS ---
+const handleGetDeskOrganizations = async (socket, data) => {
+    try {
+        const profile = data.activeProfile || data.profile || data;
+        const response = await makeApiCall('get', '/api/v1/organizations', null, profile, 'desk');
+        socket.emit('deskOrganizationsResult', { success: true, organizations: response.data.data || response.data });
+    } catch (error) {
+        socket.emit('deskOrganizationsError', { success: false, message: parseError(error).message });
+    }
+};
+
+const handleGetDeskDepartments = async (socket, data) => {
+    try {
+        const profile = data.activeProfile || data.profile || data;
+        if (data.orgId && (!profile.desk || !profile.desk.orgId)) {
+            if(!profile.desk) profile.desk = {};
+            profile.desk.orgId = data.orgId;
+        }
+        const response = await makeApiCall('get', '/api/v1/departments', null, profile, 'desk');
+        socket.emit('deskDepartmentsResult', { success: true, departments: response.data.data || response.data });
+    } catch (error) {
+        socket.emit('deskDepartmentsError', { success: false, message: parseError(error).message });
+    }
+};
+
+const handleGetDeskMailAddresses = async (socket, data) => {
+    try {
+        const profile = data.activeProfile || data.profile || data;
+        if (data.orgId && (!profile.desk || !profile.desk.orgId)) {
+            if(!profile.desk) profile.desk = {};
+            profile.desk.orgId = data.orgId;
+        }
+        let url = '/api/v1/mailReplyAddress';
+        if (data.departmentId) {
+            url += `?departmentId=${data.departmentId}`;
+        }
+        const response = await makeApiCall('get', url, null, profile, 'desk');
+        socket.emit('deskMailAddressesResult', { success: true, mailAddresses: response.data.data || response.data });
+    } catch (error) {
+        socket.emit('deskMailAddressesError', { success: false, message: parseError(error).message });
+    }
+};
+
+// --- UPDATED EXPORTS ---
 module.exports = {
     setActiveJobs,
     handleSendTestTicket,
@@ -499,5 +479,7 @@ module.exports = {
     handleUpdateMailReplyAddressDetails,
     handleSendSingleTicket,
     handleVerifyTicketEmail,
-    handleGetTicketComments
+    handleGetDeskOrganizations,
+    handleGetDeskDepartments,
+    handleGetDeskMailAddresses
 };

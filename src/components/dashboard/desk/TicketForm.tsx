@@ -10,8 +10,8 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { 
     Send, Eye, Mail, Clock, MessageSquare, Users, Pause, Play, Square, 
-    Bot, Upload, Edit, RefreshCw, Trash2, MailWarning, CheckCircle2, 
-    XCircle, ImagePlus, AlertTriangle, RotateCcw, Sparkles 
+    Bot, Upload, RefreshCw, Trash2, MailWarning, CheckCircle2, 
+    XCircle, ImagePlus, AlertTriangle, RotateCcw, Sparkles, Edit 
 } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/hooks/use-toast';
@@ -27,10 +27,10 @@ export interface TicketFormData {
   delay: number;
   sendDirectReply: boolean;
   verifyEmail: boolean;
-  verifyDelugeLog: boolean;
   displayName: string;
   stopAfterFailures: number; 
   senderName: string; 
+  enableTracking: boolean; // <-- ADD THIS
 }
 
 interface TicketFormProps {
@@ -150,8 +150,14 @@ export const TicketForm: React.FC<TicketFormProps> = ({
       onFormDataChange({ ...formData, [field]: value }); 
   };
   
-  const handleCheckboxChange = (field: 'sendDirectReply' | 'verifyEmail' | 'verifyDelugeLog', checked: boolean) => { 
-      onFormDataChange({ ...formData, [field]: checked }); 
+  // --- FIXED MUTUALLY EXCLUSIVE CHECKBOX HANDLER ---
+  const handleCheckboxChange = (field: 'sendDirectReply' | 'verifyEmail' | 'enableTracking', checked: boolean) => { 
+      const newData = { ...formData, [field]: checked };
+      
+      if (field === 'sendDirectReply' && checked) newData.verifyEmail = false;
+      if (field === 'verifyEmail' && checked) newData.sendDirectReply = false;
+      
+      onFormDataChange(newData); 
   };
 
   const handleFileImport = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -271,24 +277,49 @@ export const TicketForm: React.FC<TicketFormProps> = ({
                       </div>
                   </div>
 
+                  {/* FIXED MUTUALLY EXCLUSIVE CHECKBOXES */}
                   <div className="space-y-2">
                       <Label className="flex items-center space-x-2"><Bot className="h-4 w-4" /><span>Optional Email Actions</span></Label>
                       <div className="space-y-4 rounded-lg bg-muted/30 p-4 border border-border">
                         <div className="flex items-start space-x-3">
-                            <Checkbox id="sendDirectReply" checked={formData.sendDirectReply} onCheckedChange={(checked) => handleCheckboxChange('sendDirectReply', !!checked)} disabled={isProcessing || formData.verifyEmail} />
-                            <div className="grid gap-1.5 leading-none"><Label htmlFor="sendDirectReply" className="font-medium hover:cursor-pointer">Send Direct Public Reply</Label><p className="text-xs text-muted-foreground">Disables automation. Sends description as email.</p></div>
+                            <Checkbox 
+                                id="sendDirectReply" 
+                                checked={formData.sendDirectReply} 
+                                onCheckedChange={(checked) => handleCheckboxChange('sendDirectReply', !!checked)} 
+                                disabled={isProcessing} 
+                            />
+                            <div className="grid gap-1.5 leading-none">
+                                <Label htmlFor="sendDirectReply" className="font-medium hover:cursor-pointer">Send Direct Public Reply</Label>
+                                <p className="text-xs text-muted-foreground">Disables automation. Sends description as email.</p>
+                            </div>
                         </div>
                         <div className="flex items-start space-x-3">
-                            <Checkbox id="verifyEmail" checked={formData.verifyEmail} onCheckedChange={(checked) => handleCheckboxChange('verifyEmail', !!checked)} disabled={isProcessing || formData.sendDirectReply} />
-                            <div className="grid gap-1.5 leading-none"><Label htmlFor="verifyEmail" className="font-medium hover:cursor-pointer">Verify Automation Email</Label><p className="text-xs text-muted-foreground">Slower. Checks if automation was triggered.</p></div>
-                        </div>
-                        <div className="flex items-start space-x-3 pt-1 border-t border-border/50">
-                            <Checkbox id="verifyDelugeLog" checked={formData.verifyDelugeLog} onCheckedChange={(checked) => handleCheckboxChange('verifyDelugeLog', !!checked)} disabled={isProcessing} />
+                            <Checkbox 
+                                id="verifyEmail" 
+                                checked={formData.verifyEmail} 
+                                onCheckedChange={(checked) => handleCheckboxChange('verifyEmail', !!checked)} 
+                                disabled={isProcessing} 
+                            />
                             <div className="grid gap-1.5 leading-none">
-                                <Label htmlFor="verifyDelugeLog" className="font-medium hover:cursor-pointer flex items-center">
-                                    <Sparkles className="h-3 w-3 mr-1 text-green-500" /> Verify Deluge Log
+                                <Label htmlFor="verifyEmail" className="font-medium hover:cursor-pointer">Verify Automation Email</Label>
+                                <p className="text-xs text-muted-foreground">Slower. Checks if automation was triggered.</p>
+                            </div>
+                        </div>   
+						{/* NEW TRACKING CHECKBOX */}
+                        <Separator className="my-2" />
+                        <div className="flex items-start space-x-3">
+                            <Checkbox 
+                                id="enableTracking" 
+                                checked={formData.enableTracking} 
+                                onCheckedChange={(checked) => handleCheckboxChange('enableTracking', !!checked)} 
+                                disabled={isProcessing || !selectedProfile?.desk?.cloudflareTrackingUrl} 
+                            />
+                            <div className="grid gap-1.5 leading-none">
+                                <Label htmlFor="enableTracking" className="font-medium hover:cursor-pointer flex items-center space-x-1">
+                                    <span>Inject Cloudflare Tracker</span>
+                                    {!selectedProfile?.desk?.cloudflareTrackingUrl && <span className="text-[10px] text-destructive">(URL missing in Profile)</span>}
                                 </Label>
-                                <p className="text-xs text-muted-foreground">Checks if your custom function executed successfully.</p>
+                                <p className="text-xs text-muted-foreground">Appends invisible 1x1 pixel to detect opens instantly.</p>
                             </div>
                         </div>
                       </div>
@@ -344,7 +375,7 @@ export const TicketForm: React.FC<TicketFormProps> = ({
                   placeholder="Enter ticket description (HTML supported)..." 
                   value={formData.description} 
                   onChange={(e) => handleInputChange('description', e.target.value)} 
-                  className="min-h-[315px] bg-muted/30 border-border focus:bg-card transition-colors" 
+                  className="min-h-[245px] bg-muted/30 border-border focus:bg-card transition-colors" 
                   required 
                   disabled={isProcessing} 
                 />

@@ -43,6 +43,7 @@ export interface Profile {
     defaultDepartmentId: string;
     fromEmailAddress?: string;
     mailReplyAddressId?: string;
+    cloudflareTrackingUrl?: string;
   };
   catalyst?: {
     projectId: string;
@@ -70,7 +71,6 @@ export interface Profile {
   };
 }
 
-// --- EXISTING JOB INTERFACES ---
 export interface TicketFormData {
   emails: string;
   subject: string;
@@ -80,6 +80,7 @@ export interface TicketFormData {
   verifyEmail: boolean;
   displayName: string;
   stopAfterFailures: number; 
+  enableTracking: boolean;
 }
 export interface InvoiceFormData {
   emails: string;
@@ -428,7 +429,8 @@ const createInitialJobState = (): JobState => ({
     sendDirectReply: false,
     verifyEmail: false,
     displayName: '',
-    stopAfterFailures: 0, 
+    stopAfterFailures: 4,
+    enableTracking: false,
   },
   results: [],
   isProcessing: false,
@@ -525,7 +527,7 @@ const createInitialPeopleJobState = (): PeopleJobState => ({
         bulkPrimaryValues: "",
         bulkDefaultData: {},
         bulkDelay: 1,
-        stopAfterFailures: 0,
+        stopAfterFailures: 4, 
     },
     results: [],
     isProcessing: false,
@@ -607,7 +609,7 @@ const createInitialFsmContactJobState = (): FsmContactJobState => ({
         emails: '',
         lastName: '',
         delay: 1,
-        stopAfterFailures: 0
+        stopAfterFailures: 4 
     },
     results: [],
     isProcessing: false,
@@ -629,11 +631,11 @@ const createInitialBookingJobState = (): BookingJobState => ({
         serviceId: '',
         staffId: '',
         startTimeStr: new Date().toISOString().slice(0, 16),
-        timeGap: 5, 
+        timeGap: 5,
         workStart: 9,
         workEnd: 17,
-        delay: 0,   
-        stopAfterFailures: 0
+        delay: 0,
+        stopAfterFailures: 4 
     },
     results: [],
     isProcessing: false,
@@ -643,12 +645,12 @@ const createInitialBookingJobState = (): BookingJobState => ({
     processingTime: 0,
     totalToProcess: 0,
     countdown: 0,
-    currentDelay: 0, 
+    currentDelay: 0,
     filterText: '',
 });
 
 
-// 🔥 THE GOD MODE CACHE HOOK
+// 櫨 THE GOD MODE CACHE HOOK
 function usePersistentJobs<T>(storageKey: string, initialValue: T) {
     const [state, setState] = useState<T>(() => {
         try {
@@ -687,7 +689,7 @@ function usePersistentJobs<T>(storageKey: string, initialValue: T) {
 const MainApp = () => {
     const { toast } = useToast();
     
-    // 🔥 STATE SYSTEM
+    // 櫨 STATE SYSTEM
     const [jobs, setJobs] = usePersistentJobs<Jobs>('zoho_cache_jobs_ticket', {});
     const [invoiceJobs, setInvoiceJobs] = usePersistentJobs<InvoiceJobs>('zoho_cache_jobs_invoice', {});
     const [catalystJobs, setCatalystJobs] = usePersistentJobs<CatalystJobs>('zoho_cache_jobs_catalyst', {}); 
@@ -718,6 +720,73 @@ const MainApp = () => {
     useJobTimer(fsmContactJobs, setFsmContactJobs, 'fsm-contact');
     useJobTimer(bookingJobs, setBookingJobs, 'bookings');
 
+    // ==========================================
+    // 👁️ CLOUDFLARE REAL-TIME TRACKING POLLER
+    // ==========================================
+    const lastNotifiedRef = useRef<Set<string>>(new Set());
+
+    useEffect(() => {
+        const pollTracker = async () => {
+            try {
+                // 1. Fetch your saved Profiles from your local Node server
+                const profilesRes = await fetch(`${SERVER_URL}/api/profiles`);
+                const profiles = await profilesRes.json();
+
+                // 2. Extract any Cloudflare URLs you added in the Profile settings
+                const trackingUrls = new Set<string>();
+                profiles.forEach((p: Profile) => {
+                    if (p.desk?.cloudflareTrackingUrl) {
+                        let baseUrl = p.desk.cloudflareTrackingUrl;
+                        // Auto-format the URL to target the API endpoint
+                        if (!baseUrl.endsWith('/api/logs')) {
+                            baseUrl = baseUrl.replace(/\/$/, '') + '/api/logs';
+                        }
+                        trackingUrls.add(baseUrl);
+                    }
+                });
+
+                // 3. Check every Tracking URL we found
+                for (const url of trackingUrls) {
+                    try {
+                        const res = await fetch(url);
+                        const data = await res.json();
+                        
+                        if (data.success && data.logs) {
+                            data.logs.forEach((log: { email: string, ticketId: string, openedAt: string }) => {
+                                const logId = `${log.email}_${log.openedAt}`;
+                                
+                                if (!lastNotifiedRef.current.has(logId)) {
+                                    lastNotifiedRef.current.add(logId); 
+                                    
+                                    // Only alert if opened in the last 2 minutes
+                                    const logTime = new Date(log.openedAt).getTime();
+                                    const now = new Date().getTime();
+                                    
+                                    if (now - logTime < 120000) {
+                                        toast({
+                                            title: "👁️ Email Opened!",
+                                            description: `${log.email} just viewed their ticket.`,
+                                            className: "bg-emerald-500 text-white border-emerald-600 shadow-lg",
+                                        });
+                                    }
+                                }
+                            });
+                        }
+                    } catch (e) {
+                        // Silently ignore if a specific worker URL fails
+                    }
+                }
+            } catch (e) {
+                // Silently ignore if we can't fetch profiles
+            }
+        };
+
+        // Quietly check every 5 seconds
+        const interval = setInterval(pollTracker, 5000);
+        return () => clearInterval(interval);
+    }, [toast]);
+    // ==========================================
+
     useEffect(() => {
         const socket = io(SERVER_URL);
         socketRef.current = socket;
@@ -725,11 +794,11 @@ const MainApp = () => {
         socket.on('connect', () => {
             toast({ title: "Connected to server!" });
             
-            // 🔥 FIX: Check server immediately on connection to prevent locked caches!
+            // 櫨 FIX: Check server immediately on connection to prevent locked caches!
             socket.emit('requestActiveJobs');
         });
 
-        // 🔥 FIX: Clean up any front-end jobs that the server doesn't know about anymore (e.g. PC Rebooted)
+        // 櫨 FIX: Clean up any front-end jobs that the server doesn't know about anymore (e.g. PC Rebooted)
         socket.on('activeJobsSync', (serverActiveJobs: string[]) => {
             const cleanupStuckJobs = (jobsObj: any, setJobsFn: any, jobType: string) => {
                 let hasChanges = false;
@@ -788,7 +857,9 @@ const MainApp = () => {
               [updateData.profileName]: {
                 ...prevJobs[updateData.profileName],
                 results: prevJobs[updateData.profileName].results.map(r => 
-                  r.ticketNumber === updateData.ticketNumber ? { ...r, success: updateData.success, details: updateData.details, fullResponse: updateData.fullResponse } : r
+                  String(r.ticketNumber) === String(updateData.ticketNumber) 
+                    ? { ...r, success: updateData.success, details: updateData.details, fullResponse: updateData.fullResponse } 
+                    : r
                 )
               }
             }
@@ -1097,7 +1168,7 @@ const MainApp = () => {
 					<Route path="/appointment-manager" element={<AppointmentManager socket={socketRef.current} onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} jobs={jobs} />} />
                     <Route path="/live-stats" element={
                         <DashboardLayout onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} profiles={[]} selectedProfile={null} onProfileChange={() => {}} apiStatus={{ status: 'success', message: '' }} onShowStatus={() => {}} onManualVerify={() => {}} socket={socketRef.current} jobs={jobs}>
-                            <LiveStats jobs={jobs} invoiceJobs={invoiceJobs} catalystJobs={catalystJobs} emailJobs={emailJobs} qntrlJobs={qntrlJobs} peopleJobs={peopleJobs} creatorJobs={creatorJobs} projectsJobs={projectsJobs} webinarJobs={webinarJobs} bookingJobs={bookingJobs} />
+                            <LiveStats jobs={jobs} invoiceJobs={invoiceJobs} catalystJobs={catalystJobs} emailJobs={emailJobs} qntrlJobs={qntrlJobs} peopleJobs={peopleJobs} creatorJobs={creatorJobs} projectsJobs={projectsJobs} webinarJobs={bookingJobs} bookingJobs={bookingJobs} />
                         </DashboardLayout>
                     } />
                     <Route path="*" element={<NotFound />} />
@@ -1105,7 +1176,7 @@ const MainApp = () => {
             </BrowserRouter>
             <ProfileModal isOpen={isProfileModalOpen} onClose={() => setIsProfileModalOpen(false)} onSave={handleSaveProfile} profile={editingProfile} socket={socketRef.current} />
 
-            {/* 🔥 FIX: Emergency escape hatch button for stuck caches */}
+            {/* 櫨 FIX: Emergency escape hatch button for stuck caches */}
             <button 
                 onClick={() => {
                     if (window.confirm("WARNING: Clear all stuck job caches? (Use if accounts are locked out)")) {

@@ -261,10 +261,35 @@ const handleStartBulkInsertRecords = async (socket, data) => {
     }
 };
 
+const handleGetPeopleOrganizations = async (socket, data) => {
+    console.log(`\n[PEOPLE FETCH LOG] 1. Auto-fetch requested by socket: ${socket.id}`);
+    try {
+        // CACHE BUSTER: Force a unique profile name so utils.js generates a fresh access token!
+        const profile = { ...data, profileName: data.profileName || `temp_${Date.now()}` };
+        
+        console.log(`[PEOPLE FETCH LOG] 2. Making API call to /api/v3/organization...`);
+        const response = await makeApiCall('get', '/api/v3/organization', null, profile, 'people');
+        console.log(`[PEOPLE FETCH LOG] 3. API Response received.`);
+
+        let orgs = [];
+        if (Array.isArray(response.data)) {
+            orgs = response.data;
+        } else if (response.data && typeof response.data === 'object') {
+            orgs = [response.data];
+        }
+        
+        socket.emit('peopleOrganizationsResult', { success: true, organizations: orgs });
+    } catch (error) {
+        console.error(`[PEOPLE FETCH LOG] ERROR:`, error.message);
+        socket.emit('peopleOrganizationsError', { success: false, message: parseError(error).message });
+    }
+};
+
 module.exports = {
     setActiveJobs,
     handleGetForms,
     handleGetFormComponents,
     handleInsertRecord,
-    handleStartBulkInsertRecords, 
+    handleStartBulkInsertRecords,
+    handleGetPeopleOrganizations
 };
