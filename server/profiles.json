@@ -4411,7 +4411,8 @@
       "orgId": "",
       "defaultDepartmentId": "",
       "fromEmailAddress": "",
-      "mailReplyAddressId": ""
+      "mailReplyAddressId": "",
+      "cloudflareTrackingUrl": ""
     },
     "catalyst": {
       "projectId": "",
@@ -4429,7 +4430,8 @@
       "appName": ""
     },
     "projects": {
-      "portalId": "919391385"
+      "portalId": "919391385",
+      "cloudflareTrackingUrl": "https://marketing-dsk-tr.med217623.workers.dev"
     },
     "meeting": {
       "zsoid": ""
@@ -4451,7 +4453,7 @@
       "defaultDepartmentId": "1321467000000006907",
       "fromEmailAddress": "support@malidoe.zohodesk.com",
       "mailReplyAddressId": "1321467000000409062",
-      "cloudflareTrackingUrl": "https://red-605f.med217623.workers.dev/"
+      "cloudflareTrackingUrl": "https://marketing-dsk-tr.med217623.workers.dev"
     },
     "catalyst": {
       "projectId": "",
@@ -4469,7 +4471,8 @@
       "appName": ""
     },
     "projects": {
-      "portalId": ""
+      "portalId": "",
+      "cloudflareTrackingUrl": ""
     },
     "meeting": {
       "zsoid": ""
@@ -4549,7 +4552,8 @@
       "appName": ""
     },
     "projects": {
-      "portalId": "919963853"
+      "portalId": "919963853",
+      "cloudflareTrackingUrl": "https://marketing-dsk-tr.med217623.workers.dev"
     },
     "meeting": {
       "zsoid": ""

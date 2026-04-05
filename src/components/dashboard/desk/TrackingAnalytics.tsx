@@ -27,9 +27,10 @@ interface LogEntry {
     openedAt: string;
     country?: string;
     profileName?: string; 
+    profile?: string; 
     hasClicked?: boolean; 
     clickCount?: number; 
-    clickCountry?: string; // <-- ADDED CLICK COUNTRY
+    clickCountry?: string; 
 }
 
 export const TrackingAnalytics: React.FC<TrackingAnalyticsProps> = ({ isOpen, onClose, trackingUrl, profileName }) => {
@@ -52,13 +53,19 @@ export const TrackingAnalytics: React.FC<TrackingAnalyticsProps> = ({ isOpen, on
         if (!url) return;
         setIsLoading(true);
         try {
-            const res = await fetch(url);
+            // 🚨 THE FIX: Removed custom headers to bypass browser CORS blocking!
+            // The ?t= timestamp forces the browser to get the freshest data.
+            const res = await fetch(`${url}?t=${new Date().getTime()}`);
             const data = await res.json();
+            
             if (data.success && data.logs) {
                 const sorted = data.logs.sort((a: LogEntry, b: LogEntry) => 
                     new Date(b.openedAt).getTime() - new Date(a.openedAt).getTime()
                 );
                 setLogs(sorted);
+            } else {
+                console.error("Cloudflare Error:", data.error);
+                toast({ title: "Error", description: data.error || "Failed to load logs.", variant: "destructive" });
             }
         } catch (error) {
             console.error("Failed to fetch tracking logs", error);
@@ -100,7 +107,11 @@ export const TrackingAnalytics: React.FC<TrackingAnalyticsProps> = ({ isOpen, on
     }, [isOpen, trackingUrl]);
 
     const filteredLogs = useMemo(() => {
-        let filtered = logs.filter(log => log.profileName === profileName);
+        let filtered = logs.filter(log => {
+            const logProfile = String(log.profileName || log.profile || '').toLowerCase();
+            const currentProfile = String(profileName || '').toLowerCase();
+            return logProfile === currentProfile;
+        });
 
         if (date?.from) {
             filtered = filtered.filter(log => {
@@ -182,7 +193,6 @@ export const TrackingAnalytics: React.FC<TrackingAnalyticsProps> = ({ isOpen, on
                     </div>
                 ) : (
                     <div className="space-y-6">
-                        {/* KPI CARDS */}
                         <div className="grid grid-cols-3 gap-4">
                             <Card className="shadow-sm">
                                 <CardContent className="p-4 flex flex-col items-center justify-center text-center">
@@ -207,7 +217,6 @@ export const TrackingAnalytics: React.FC<TrackingAnalyticsProps> = ({ isOpen, on
                             </Card>
                         </div>
 
-                        {/* TIMELINE CHART */}
                         {timelineData.length > 0 && (
                             <Card className="shadow-sm">
                                 <CardHeader className="pb-2">
@@ -232,7 +241,6 @@ export const TrackingAnalytics: React.FC<TrackingAnalyticsProps> = ({ isOpen, on
                             </Card>
                         )}
 
-                        {/* TOP COUNTRIES PIE CHART */}
                         {pieData.length > 0 && (
                             <Card className="shadow-sm">
                                 <CardHeader className="pb-2">
@@ -262,7 +270,6 @@ export const TrackingAnalytics: React.FC<TrackingAnalyticsProps> = ({ isOpen, on
                             </Card>
                         )}
 
-                        {/* RAW DATA TABLE */}
                         <Card className="shadow-sm">
                             <CardHeader className="pb-2 border-b">
                                 <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Recent Activity</CardTitle>
@@ -289,9 +296,7 @@ export const TrackingAnalytics: React.FC<TrackingAnalyticsProps> = ({ isOpen, on
                                                                 )}
                                                             </div>
                                                             <div className="flex items-center text-[10px] text-muted-foreground mt-0.5 space-x-2">
-                                                                <span className="bg-muted px-1.5 py-0.5 rounded">{log.ticketId || 'Bulk'}</span>
-                                                                
-                                                                {/* 🚨 NOW SHOWS BOTH OPEN AND CLICK LOCATIONS */}
+                                                                <span className="bg-muted px-1.5 py-0.5 rounded font-bold text-slate-700">{log.ticketId || 'Bulk'}</span>
                                                                 {log.country && <span>👁️ Open: {log.country}</span>}
                                                                 {log.clickCountry && <span>🖱️ Click: {log.clickCountry}</span>}
                                                             </div>

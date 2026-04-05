@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Socket } from 'socket.io-client';
-import { useLocation } from 'react-router-dom'; // 🔥 ADDED: For Live Stats redirect
+import { useLocation } from 'react-router-dom'; 
 import { DashboardLayout } from '../DashboardLayout';
 import { useToast } from '@/hooks/use-toast';
 import { Profile } from '@/App';
@@ -10,9 +10,10 @@ import { ProjectsJobs, ProjectsJobState, ZohoProject, ZohoTask } from './Project
 import { TaskBulkForm } from './TaskBulkForm'; 
 import { TaskResultsDisplay } from './TaskResultsDisplay';
 import { TaskProgressTable } from './TaskProgressTable';
+import { TrackingAnalytics } from '../desk/TrackingAnalytics'; // 🚨 IMPORTED THE TRACKER
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { Loader2, Trash2, Clock, CheckCircle2, XCircle, RefreshCw } from 'lucide-react'; 
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
+import { Loader2, Trash2, Clock, CheckCircle2, XCircle, RefreshCw, Activity } from 'lucide-react'; 
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Progress } from '@/components/ui/progress';
@@ -68,16 +69,16 @@ export const ProjectsTasksDashboard: React.FC<ProjectsTasksDashboardProps> = ({
     socket, onAddProfile, onEditProfile, onDeleteProfile, jobs, setJobs, createInitialJobState, title, jobType, description,
 }) => {
   const { toast } = useToast();
-  const location = useLocation(); // 🔥 ADDED
-  const redirectProcessed = useRef(false); // 🔥 ADDED
+  const location = useLocation(); 
+  const redirectProcessed = useRef(false); 
   
-  // 🔥 FIX: Remember the last selected profile using localStorage
   const [activeProfileName, setActiveProfileName] = useState<string | null>(() => {
       return localStorage.getItem('zoho_projects_last_profile') || null;
   });
 
   const [apiStatus, setApiStatus] = useState<ApiStatus>({ status: 'loading', message: 'Connecting to server...', fullResponse: null });
   const [isStatusModalOpen, setIsStatusModalOpen] = useState(false);
+  const [isAnalyticsOpen, setIsAnalyticsOpen] = useState(false); // 🚨 ANALYTICS DRAWER STATE
   
   const [projects, setProjects] = useState<ZohoProject[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
@@ -86,26 +87,21 @@ export const ProjectsTasksDashboard: React.FC<ProjectsTasksDashboardProps> = ({
   const [currentProjectName, setCurrentProjectName] = useState<string>('');
   const [isUpdatingName, setIsUpdatingName] = useState(false);
 
-  // --- CONNECT TO GLOBAL CACHE ---
   const [taskLimit, setTaskLimit] = useState<string>(globalMemoryCache.taskLimit);
   const [viewLogsMap, setViewLogsMap] = useState<Record<string, ViewLog[]>>(globalMemoryCache.viewLogsMap);
   const [deleteStates, setDeleteStates] = useState<Record<string, ProjectsDeleteJobState>>(globalMemoryCache.deleteStates);
   const [tasks, setTasks] = useState<ZohoTask[]>(globalMemoryCache.tasks);
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(globalMemoryCache.selectedTaskIds);
 
-  // Track active profile safely for sockets
   const activeProfileRef = useRef(activeProfileName);
   useEffect(() => { activeProfileRef.current = activeProfileName; }, [activeProfileName]);
 
-  // Sync state back to memory cache instantly whenever it updates
   useEffect(() => { globalMemoryCache.taskLimit = taskLimit; }, [taskLimit]);
   useEffect(() => { globalMemoryCache.viewLogsMap = viewLogsMap; }, [viewLogsMap]);
   useEffect(() => { globalMemoryCache.deleteStates = deleteStates; }, [deleteStates]);
   useEffect(() => { globalMemoryCache.tasks = tasks; }, [tasks]);
   useEffect(() => { globalMemoryCache.selectedTaskIds = selectedTaskIds; }, [selectedTaskIds]);
-  // --------------------------------
 
-  // 🔥 FIX: Update localStorage whenever the profile changes
   useEffect(() => {
       if (activeProfileName) {
           localStorage.setItem('zoho_projects_last_profile', activeProfileName);
@@ -123,11 +119,8 @@ export const ProjectsTasksDashboard: React.FC<ProjectsTasksDashboardProps> = ({
   
   const projectsProfiles = useMemo(() => profiles.filter(p => p.projects?.portalId), [profiles]);
 
-  // 🔥 FIX: Smart Profile Selection (Handles Live Stats clicks AND cache memory)
   useEffect(() => {
     if (projectsProfiles.length === 0) return;
-
-    // Check if we are coming from Live Stats
     if (!redirectProcessed.current && location.state?.targetProfile) {
         const target = projectsProfiles.find(p => p.profileName === location.state.targetProfile);
         if (target) {
@@ -136,8 +129,6 @@ export const ProjectsTasksDashboard: React.FC<ProjectsTasksDashboardProps> = ({
             return;
         }
     }
-
-    // Fallback: If no valid profile is selected (or the cached one was deleted), select the first one
     if (!activeProfileName || !projectsProfiles.find(p => p.profileName === activeProfileName)) {
       setActiveProfileName(projectsProfiles[0].profileName);
     }
@@ -165,21 +156,12 @@ export const ProjectsTasksDashboard: React.FC<ProjectsTasksDashboardProps> = ({
   }, [socket, activeProfileName, selectedProfile, selectedProjectId, currentProjectName]); 
 
   const fetchTasks = useCallback(() => {
-      console.log("\n=======================================================");
-      console.log("🔄 [SERVER CALL] Requesting Tasks from Zoho API...");
-      console.log("📂 Target Project ID:", selectedProjectId);
-      console.log("👤 Active Profile:", activeProfileName);
-      console.log("📏 Max Task Limit:", taskLimit);
-      console.log("📡 Socket Connected:", socket?.connected);
-      console.log("=======================================================\n");
-
       if (socket && activeProfileName && selectedProjectId && selectedProfile) {
         setIsDataLoading(true);
         setViewLogsMap(prev => ({ ...prev, [activeProfileName]: [] })); 
         setTasks([]); 
         socket.emit('getProjectsTasks', { selectedProfileName: activeProfileName, queryParams: { project_id: selectedProjectId, limit: taskLimit } });
       } else {
-          console.log("❌ [FETCH ABORTED] Missing required parameters. State:", { socket: !!socket, activeProfileName, selectedProjectId });
           setTasks([]);
           setIsDataLoading(false);
       }
@@ -189,17 +171,12 @@ export const ProjectsTasksDashboard: React.FC<ProjectsTasksDashboardProps> = ({
 
   useEffect(() => { 
       if (!selectedProjectId) return;
-
       const isProjectChanged = prevConfig.current.project !== selectedProjectId;
       const isLimitChanged = prevConfig.current.limit !== taskLimit;
 
       if (tasks.length === 0 || isProjectChanged || isLimitChanged) {
-          console.log("\n=======================================================");
-          console.log("⚡ [AUTO-TRIGGER] Fetching Tasks due to Dropdown Change");
-          console.log("=======================================================\n");
           fetchTasks(); 
       }
-
       prevConfig.current = { project: selectedProjectId, limit: taskLimit };
   }, [fetchTasks, selectedProjectId, taskLimit, tasks.length]);
 
@@ -207,7 +184,6 @@ export const ProjectsTasksDashboard: React.FC<ProjectsTasksDashboardProps> = ({
     if (!socket) return;
 
     const handleApiStatus = (result: { success: boolean, message: string, fullResponse?: any }) => setApiStatus({ status: result.success ? 'success' : 'error', message: result.message, fullResponse: result.fullResponse || null });
-    
     const handleProjectsResult = (result: { success: boolean, data: ZohoProject[], error?: string }) => {
         setIsDataLoading(false);
         if (result.success) {
@@ -220,7 +196,6 @@ export const ProjectsTasksDashboard: React.FC<ProjectsTasksDashboardProps> = ({
             toast({ title: "Error Fetching Projects", description: result.error, variant: 'destructive' });
         }
     };
-    
     const handleTasksResult = (result: { success: boolean, data: ZohoTask[], error?: string }) => {
         setIsDataLoading(false);
         if (result.success) {
@@ -235,20 +210,14 @@ export const ProjectsTasksDashboard: React.FC<ProjectsTasksDashboardProps> = ({
     const handleTasksLog = (log: Omit<ViewLog, 'id' | 'timestamp'>) => {
         const currentProfile = activeProfileRef.current;
         if (!currentProfile) return;
-        
         setViewLogsMap(prev => {
             const existingLogs = prev[currentProfile] || [];
-            return {
-                ...prev,
-                [currentProfile]: [{ ...log, id: Math.random().toString(), timestamp: new Date() }, ...existingLogs]
-            };
+            return { ...prev, [currentProfile]: [{ ...log, id: Math.random().toString(), timestamp: new Date() }, ...existingLogs] };
         });
     };
 
     const handleDeleteStarted = (data: { total: number, profileName: string }) => {
-        setDeleteStates(prev => ({
-            ...prev, [data.profileName]: { status: 'deleting', totalToDelete: data.total, deletedCount: 0, failedCount: 0, failedIds: [] }
-        }));
+        setDeleteStates(prev => ({ ...prev, [data.profileName]: { status: 'deleting', totalToDelete: data.total, deletedCount: 0, failedCount: 0, failedIds: [] } }));
         toast({ title: "Background Deletion Initiated", description: `Queued ${data.total} tasks.` });
     };
 
@@ -387,7 +356,18 @@ export const ProjectsTasksDashboard: React.FC<ProjectsTasksDashboardProps> = ({
         apiStatus={apiStatus} onShowStatus={() => setIsStatusModalOpen(true)} onManualVerify={handleManualVerify} socket={socket} onEditProfile={onEditProfile} onDeleteProfile={onDeleteProfile} service={jobType}
       >
         <div className="space-y-6">
-            <h1 className="text-3xl font-bold tracking-tight">{title}</h1>
+            
+            {/* 🚨 ADDED ANALYTICS BUTTON NEXT TO TITLE */}
+            <div className="flex items-center justify-between">
+                <h1 className="text-3xl font-bold tracking-tight">{title}</h1>
+                <Button 
+                    variant="outline" 
+                    onClick={() => setIsAnalyticsOpen(true)} 
+                    className="bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100"
+                >
+                    <Activity className="w-4 h-4 mr-2" /> Live Analytics
+                </Button>
+            </div>
             
             {selectedProfile && (
                 <Tabs defaultValue="bulk-create">
@@ -509,7 +489,6 @@ export const ProjectsTasksDashboard: React.FC<ProjectsTasksDashboardProps> = ({
         </div>
       </DashboardLayout>
       
-      {/* 🔥 ADDED FULL JSON RESPONSE VIEWER HERE 🔥 */}
       <Dialog open={isStatusModalOpen} onOpenChange={setIsStatusModalOpen}>
         <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col">
             <DialogHeader><DialogTitle>API Connection Status</DialogTitle></DialogHeader>
@@ -529,6 +508,14 @@ export const ProjectsTasksDashboard: React.FC<ProjectsTasksDashboardProps> = ({
             )}
         </DialogContent>
       </Dialog>
+
+      {/* 🚨 MOUNTED THE TRACKING ANALYTICS DRAWER HERE */}
+      <TrackingAnalytics 
+          isOpen={isAnalyticsOpen} 
+          onClose={() => setIsAnalyticsOpen(false)} 
+          trackingUrl={(selectedProfile as any)?.projects?.cloudflareTrackingUrl || ''}
+          profileName={activeProfileName || ''} 
+      />
     </>
   );
 };

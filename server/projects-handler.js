@@ -245,7 +245,7 @@ const handleCreateSingleTask = async (data, providedMap = null) => {
 
 const handleStartBulkCreateTasks = async (socket, data) => {
     const { formData, selectedProfileName, activeProfile } = data;
-    const { taskName, primaryField, primaryValues, projectId, taskDescription, tasklistId, delay, bulkDefaultData, stopAfterFailures = 4 } = formData;
+    const { taskName, primaryField, primaryValues, projectId, taskDescription, tasklistId, delay, bulkDefaultData, stopAfterFailures = 4, enableTracking } = formData; // 🚨 PULLED enableTracking
     
     const jobId = createJobId(socket.id, selectedProfileName, 'projects');
     activeJobs[jobId] = { status: 'running', consecutiveFailures: 0, stopAfterFailures: Number(stopAfterFailures) };
@@ -279,6 +279,50 @@ const handleStartBulkCreateTasks = async (socket, data) => {
             const dataForThisTask = { ...bulkDefaultData }; 
             if (primaryField !== 'name') dataForThisTask[primaryField] = currentValue; 
             
+            // ==========================================
+            // 👁️ THE SMART SCANNER: INJECT STEALTH TRACKING
+            // ==========================================
+            const trackingUrl = activeProfile.projects?.cloudflareTrackingUrl;
+            
+            // 🚨 ONLY INJECT IF THE USER ENABLED IT AND A URL EXISTS
+            if (enableTracking && trackingUrl) {
+                const baseUrl = trackingUrl.replace(/\/$/, '');
+                const safeBaseUrl = baseUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // Escape for Regex
+                let targetPixelKey = null;
+                let maxTextLength = -1;
+
+                // Step A: Scan every chunk for Links
+                for (const key of Object.keys(dataForThisTask)) {
+                    if (typeof dataForThisTask[key] === 'string' && dataForThisTask[key].trim().length > 0) {
+                        
+                        // 🚨 ULTIMATE SMART SCANNER: Catches Plain Text AND HTML Links!
+                        const universalLinkRegex = new RegExp(`(${safeBaseUrl}[^\\s"'<>]*)`, 'g');
+                        
+                        dataForThisTask[key] = dataForThisTask[key].replace(universalLinkRegex, (match) => {
+                            if (match.includes('email=')) return match; // Prevent double-adding
+                            const separator = match.includes('?') ? '&' : '?';
+                            return `${match}${separator}email=${encodeURIComponent(currentValue)}&profile=${encodeURIComponent(selectedProfileName)}&ticketId=Projects`;
+                        });
+                        
+                        // Find the longest text field for the open pixel
+                        const val = dataForThisTask[key].trim();
+                        const isLikelyEmail = val.includes('@') && !val.includes(' ');
+                        
+                        if (!isLikelyEmail && val.length > maxTextLength) {
+                            maxTextLength = val.length;
+                            targetPixelKey = key;
+                        }
+                    }
+                }
+
+                // Step B: Inject the Open Pixel 
+                if (targetPixelKey) {
+                    const pixel = `<img src="${baseUrl}/track.gif?email=${encodeURIComponent(currentValue)}&ticketId=Projects&profile=${encodeURIComponent(selectedProfileName)}" width="1" height="1" alt="" style="display:none;" />`;
+                    dataForThisTask[targetPixelKey] += pixel;
+                }
+            }
+            // ==========================================
+
             const result = await handleCreateSingleTask({
                 portalId, projectId, taskName: primaryField === 'name' ? currentValue : `${taskName}_${i + 1}`, 
                 taskDescription, tasklistId, selectedProfileName, bulkDefaultData: dataForThisTask 

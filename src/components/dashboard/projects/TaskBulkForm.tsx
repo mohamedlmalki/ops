@@ -7,8 +7,9 @@ import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
+import { Switch } from '@/components/ui/switch'; // 🚨 IMPORTED SWITCH
 import { ProjectsJobState, ZohoProject, ProjectsFormData, ProjectsJobs } from './ProjectsDataTypes';
-import { Loader2, Play, Pause, Square, ListFilterIcon, ImagePlus, Eye, Save, Upload, List, CheckCircle2, XCircle, Hash, AlertTriangle, Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { Loader2, Play, Pause, Square, ListFilterIcon, ImagePlus, Eye, Save, Upload, List, CheckCircle2, XCircle, Hash, AlertTriangle, Plus, RefreshCw, Trash2, Activity } from 'lucide-react';
 import { Socket } from 'socket.io-client';
 import {
     DropdownMenu,
@@ -231,9 +232,9 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
   const [isLoadingLayout, setIsLoadingLayout] = useState(false);
 
   const stopAfterFailures = (jobState.formData as any).stopAfterFailures || 4;
+  const enableTracking = (jobState.formData as any).enableTracking || false; // 🚨 ADDED TRACKING STATE
 
-  // 🔥 FIX: Trust App.tsx cache entirely and remove conflicting manual localStorage saves
-  const handleFormDataChange = useCallback((field: keyof ProjectsFormData | 'stopAfterFailures', value: any) => {
+  const handleFormDataChange = useCallback((field: keyof ProjectsFormData | 'stopAfterFailures' | 'enableTracking', value: any) => {
     if (!selectedProfileName) return;
 
     setJobs((prev) => {
@@ -251,7 +252,6 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
     });
   }, [selectedProfileName, setJobs, jobState]); 
 
-  // 🔥 FIX: Trust App.tsx cache entirely for dynamic fields
   const handleDynamicFieldChange = useCallback((columnName: string, value: string) => {
     if (!selectedProfileName) return;
     setJobs((prev) => {
@@ -369,7 +369,6 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
   }, [allFields, jobState.formData.primaryField, handleFormDataChange]); 
 
 
-  // 🔥 THE "GOD MODE" SMART SESSION RECOVERY LISTENER 🔥
   useEffect(() => {
       if (!socket || !selectedProfileName) return;
       
@@ -391,7 +390,8 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
                   primaryValues: remainingTasks.join('\n'), 
                   tasklistId: autoTaskListId,
                   displayName: selectedProfileName,
-                  stopAfterFailures: stopAfterFailures
+                  stopAfterFailures: stopAfterFailures,
+                  enableTracking: enableTracking // 🚨 ADDED
               };
 
               setJobs((prev: any) => ({
@@ -411,7 +411,7 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
       
       socket.on('requestJobRecovery', onRecovery);
       return () => { socket.off('requestJobRecovery', onRecovery); };
-  }, [socket, selectedProfileName, jobState.formData, results.length, autoTaskListId, stopAfterFailures, projects]);
+  }, [socket, selectedProfileName, jobState.formData, results.length, autoTaskListId, stopAfterFailures, enableTracking, projects]);
 
 
   const handleStart = () => {
@@ -453,7 +453,8 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
       ...jobState.formData, 
       tasklistId: autoTaskListId, 
       displayName: selectedProfileName,
-      stopAfterFailures: stopAfterFailures
+      stopAfterFailures: stopAfterFailures,
+      enableTracking: enableTracking // 🚨 ADDED
     };
 
     setJobs((prevJobs: any) => ({
@@ -665,7 +666,8 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
       <CardContent>
         <div className="grid gap-4">
           
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-4">
+          {/* 🚨 ADDED THE TRACKING TOGGLE INTO THE TOP GRID */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
             
             <div className="grid gap-2">
                 <Label htmlFor="projectName">Active Project Name</Label>
@@ -761,6 +763,22 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
                 className="placeholder:text-muted-foreground/70"
                 disabled={isProcessing}
               />
+            </div>
+
+            {/* 🚨 THE NEW TRACKING SWITCH 🚨 */}
+            <div className="grid gap-2">
+              <Label htmlFor="enableTracking" className="flex items-center space-x-1 whitespace-nowrap">
+                <Activity className="h-3 w-3 text-blue-500" />
+                <span>Enable Tracking</span>
+              </Label>
+              <div className="flex h-10 items-center">
+                  <Switch
+                      id="enableTracking"
+                      checked={enableTracking}
+                      onCheckedChange={(checked) => handleFormDataChange('enableTracking' as any, checked)}
+                      disabled={isProcessing}
+                  />
+              </div>
             </div>
 
           </div>

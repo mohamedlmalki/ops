@@ -45,7 +45,7 @@ const getInitialFormData = (): Profile => ({
     defaultDepartmentId: '',
     fromEmailAddress: '',
     mailReplyAddressId: '',
-	cloudflareTrackingUrl: '', // <-- ADD THIS
+    cloudflareTrackingUrl: '', 
   },
   catalyst: {
     projectId: '',
@@ -64,6 +64,7 @@ const getInitialFormData = (): Profile => ({
   },
   projects: {
     portalId: '',
+    cloudflareTrackingUrl: '', // 🚨 ADDED DEDICATED TRACKER FOR PROJECTS
   },
   meeting: {
     zsoid: '',
@@ -281,7 +282,6 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
         
         if (data.organizations.length === 1) {
             const org = data.organizations[0];
-            // Look for common ID fields in People (zoid, organizationId) or fallback to Company string
             const orgId = org.zoid || org.organizationId || org.id || org.Company || 'UNKNOWN_ID';
             setFormData(prev => ({ ...prev, people: { ...(prev.people as object), orgId: orgId.toString() } }));
             toast({ title: "Success!", description: `People Org ID auto-filled with: ${orgId}` });
@@ -449,7 +449,6 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
     });
   };
 
-  // --- NEW: FETCH PEOPLE ---
   const handleFetchPeople = () => {
     console.log("[FRONTEND LOG] Fetch People button clicked!");
     if (!formData.clientId || !formData.clientSecret || !formData.refreshToken) {
@@ -539,7 +538,6 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
                     <Label htmlFor="mailReplyAddressId" className="text-right">Mail Reply ID</Label>
                     <Input id="mailReplyAddressId" name="mailReplyAddressId" value={formData.desk?.mailReplyAddressId || ''} onChange={(e) => handleNestedChange('desk', e)} className="col-span-3" placeholder="(Optional)" />
                     </div>
-					{/* NEW CLOUDFLARE TRACKING INPUT */}
                     <div className="grid grid-cols-4 items-center gap-4">
                         <Label htmlFor="cloudflareTrackingUrl" className="text-right flex flex-col">
                             <span>Tracker URL</span>
@@ -606,6 +604,34 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
            
             {/* --- COLUMN 2 --- */}
             <div className="space-y-6">
+
+              {/* --- ZOHO PROJECTS --- */}
+              <div>
+                <h4 className="text-sm font-semibold mb-4 flex items-center">
+                  <FolderKanban className="h-4 w-4 mr-2" />
+                  Zoho Projects Settings
+                </h4>
+                <div className="grid gap-4 pl-4 border-l-2 ml-2">
+                    <div className="grid grid-cols-4 items-center gap-4">
+                      <Label htmlFor="projects_portalId" className="text-right">Portal ID</Label>
+                      <div className="col-span-3 flex items-center gap-2">
+                          <Input id="projects_portalId" name="portalId" value={formData.projects?.portalId || ''} onChange={(e) => handleNestedChange('projects', e)} className="flex-1" />
+                          <Button type="button" variant="outline" size="sm" onClick={handleFetchPortals} disabled={isFetchingPortals}>
+                              {isFetchingPortals ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+                              <span className="ml-2 hidden sm:inline">Fetch</span>
+                          </Button>
+                      </div>
+                    </div>
+                    {/* 🚨 NEW: PROJECTS TRACKING URL FIELD */}
+                    <div className="grid grid-cols-4 items-center gap-4">
+                        <Label htmlFor="projects_cloudflareTrackingUrl" className="text-right flex flex-col">
+                            <span>Tracker URL</span>
+                            <span className="text-[9px] text-muted-foreground">Cloudflare Worker</span>
+                        </Label>
+                        <Input id="projects_cloudflareTrackingUrl" name="cloudflareTrackingUrl" value={formData.projects?.cloudflareTrackingUrl || ''} onChange={(e) => handleNestedChange('projects', e)} className="col-span-3" placeholder="https://project-tracker...workers.dev" />
+                    </div>
+                </div>
+              </div>
               
               {/* --- ZOHO FSM SETTINGS --- */}
               <div>
@@ -691,26 +717,6 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
                 </div>
               </div>
 
-              {/* --- ZOHO PROJECTS --- */}
-              <div>
-                <h4 className="text-sm font-semibold mb-4 flex items-center">
-                  <FolderKanban className="h-4 w-4 mr-2" />
-                  Zoho Projects Settings
-                </h4>
-                <div className="grid gap-4 pl-4 border-l-2 ml-2">
-                    <div className="grid grid-cols-4 items-center gap-4">
-                    <Label htmlFor="projects_portalId" className="text-right">Portal ID</Label>
-                    <div className="col-span-3 flex items-center gap-2">
-                        <Input id="projects_portalId" name="portalId" value={formData.projects?.portalId || ''} onChange={(e) => handleNestedChange('projects', e)} className="flex-1" />
-                        <Button type="button" variant="outline" size="sm" onClick={handleFetchPortals} disabled={isFetchingPortals}>
-                            {isFetchingPortals ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-                            <span className="ml-2 hidden sm:inline">Fetch</span>
-                        </Button>
-                    </div>
-                    </div>
-                </div>
-              </div>
-
             </div>
 
           </div>
@@ -737,7 +743,6 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
         }}
     />
 
-    {/* ZOHO DESK SELECTOR MODALS */}
     <GenericSelectorModal
         isOpen={isDeskOrgModalOpen}
         onClose={() => setIsDeskOrgModalOpen(false)}
@@ -796,7 +801,6 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
         }}
     />
 
-    {/* ZOHO QNTRL SELECTOR MODAL */}
     <GenericSelectorModal
         isOpen={isQntrlOrgModalOpen}
         onClose={() => setIsQntrlOrgModalOpen(false)}
@@ -811,7 +815,6 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
         }}
     />
 
-    {/* ZOHO PEOPLE SELECTOR MODAL */}
     <GenericSelectorModal
         isOpen={isPeopleOrgModalOpen}
         onClose={() => setIsPeopleOrgModalOpen(false)}
@@ -829,7 +832,6 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
     </>
   );
 };
-
 
 // REUSABLE COMPONENTS
 

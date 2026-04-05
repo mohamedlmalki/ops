@@ -32,6 +32,12 @@ export function SmartTextSplitter({ fields, onSplitValues }: SmartTextSplitterPr
     const totalLength = bigText.length;
     const chunkSize = Math.ceil(totalLength / numFields); 
 
+    // 🚨 THE SAFETY BUFFER: Ensure we don't exceed 800 to leave room for the pixel
+    if (chunkSize > 800) {
+        alert(`Error: Your text is too large! It requires ${chunkSize} characters per field, but the maximum allowed is 800 (to leave room for the tracking pixel). Please create more multiline fields in Zoho or shorten the text.`);
+        return;
+    }
+
     const newFieldValues: Record<string, string> = {};
 
     // Split the text perfectly and assign to the right field API names
@@ -52,7 +58,7 @@ export function SmartTextSplitter({ fields, onSplitValues }: SmartTextSplitterPr
       <div>
         <h3 className="text-sm font-bold text-slate-800">Smart Text Splitter</h3>
         <p className="text-xs text-slate-500">
-          Paste your large text/code here. It will automatically split into equal parts across the <strong>{multilineFields.length}</strong> available multiline fields.
+          Paste your large text/code here. It will automatically split into equal parts across the <strong>{multilineFields.length}</strong> available multiline fields. <span className="text-red-500">(Max 800 chars per field)</span>
         </p>
       </div>
 
@@ -67,7 +73,7 @@ export function SmartTextSplitter({ fields, onSplitValues }: SmartTextSplitterPr
         <div className="text-xs font-medium text-slate-500">
           Total Characters: {bigText.length} 
           {bigText.length > 0 && multilineFields.length > 0 && (
-            <span className="ml-2 text-blue-600">
+            <span className={`ml-2 ${Math.ceil(bigText.length / multilineFields.length) > 800 ? 'text-red-600 font-bold' : 'text-blue-600'}`}>
               (~{Math.ceil(bigText.length / multilineFields.length)} characters per field)
             </span>
           )}

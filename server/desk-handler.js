@@ -5,7 +5,7 @@ const { makeApiCall, parseError, writeToTicketLog, createJobId, readTicketLog, r
 let activeJobs = {};
 
 const setActiveJobs = (jobsObject) => {
-  activeJobs = jobsObject;
+    activeJobs = jobsObject;
 };
 
 const interruptibleSleep = (ms, jobId) => {
@@ -28,7 +28,7 @@ const interruptibleSleep = (ms, jobId) => {
 };
 
 const handleSendSingleTicket = async (data) => {
-    const { email, subject, description, selectedProfileName, sendDirectReply, enableTracking } = data;
+    const { email, subject, description, selectedProfileName, sendDirectReply } = data;
     if (!email || !selectedProfileName) return { success: false, error: 'Missing email or profile.' };
     const profiles = readProfiles();
     const activeProfile = profiles.find(p => p.profileName === selectedProfileName);
@@ -37,17 +37,24 @@ const handleSendSingleTicket = async (data) => {
         if (!activeProfile) return { success: false, error: 'Profile not found.' };
         const deskConfig = activeProfile.desk;
 
-        // INJECT PIXEL & REWRITE LINKS HERE
+        // 🚨 ULTIMATE SMART SCANNER: Catches Plain Text AND HTML Links!
         let finalDescription = description;
-        if (enableTracking && deskConfig.cloudflareTrackingUrl) {
-            // 1. Inject the Open Pixel with /track.gif
-            const pixel = `<img src="${deskConfig.cloudflareTrackingUrl}/track.gif?email=${encodeURIComponent(email)}&ticketId=Single&profile=${encodeURIComponent(selectedProfileName)}" width="1" height="1" style="display:none;" />`;
-            finalDescription = description + pixel;
+        if (deskConfig.cloudflareTrackingUrl) {
+            const baseUrl = deskConfig.cloudflareTrackingUrl.replace(/\/$/, '');
+            const safeBaseUrl = baseUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // Escape for Regex
             
-            // 2. Automatically append ?email to short links
-            const shortenerBaseUrl = deskConfig.cloudflareTrackingUrl.replace(/\/$/, '');
-            const linkRegex = new RegExp(`href="(${shortenerBaseUrl}/[^"?]+)"`, 'g');
-            finalDescription = finalDescription.replace(linkRegex, `href="$1?email=${encodeURIComponent(email)}"`);
+            // 1. UNIVERSAL LINK MATCHER: Finds the URL anywhere, even without href=""
+            const universalLinkRegex = new RegExp(`(${safeBaseUrl}[^\\s"'<>]*)`, 'g');
+            
+            finalDescription = finalDescription.replace(universalLinkRegex, (match) => {
+                if (match.includes('email=')) return match; // Prevent double-adding
+                const separator = match.includes('?') ? '&' : '?';
+                return `${match}${separator}email=${encodeURIComponent(email)}&profile=${encodeURIComponent(selectedProfileName)}&ticketId=Single`;
+            });
+
+            // 2. Inject the Open Pixel
+            const pixel = `<img src="${baseUrl}/track.gif?email=${encodeURIComponent(email)}&ticketId=Single&profile=${encodeURIComponent(selectedProfileName)}" width="1" height="1" alt="" style="display:none;" />`;
+            finalDescription += pixel;
         }
 
         const ticketData = { subject, description: finalDescription, departmentId: deskConfig.defaultDepartmentId, contact: { email }, channel: 'Email' };
@@ -82,23 +89,30 @@ const handleVerifyTicketEmail = async (data) => {
 
 const handleSendTestTicket = async (socket, data) => {
     console.log(`[Desk] Sending Test Ticket to ${data.email}...`);
-    const { email, subject, description, selectedProfileName, sendDirectReply, verifyEmail, activeProfile, enableTracking } = data;
+    const { email, subject, description, selectedProfileName, sendDirectReply, verifyEmail, activeProfile } = data;
      if (!email || !selectedProfileName) return socket.emit('testTicketResult', { success: false, error: 'Missing email or profile.' });
     try {
         if (!activeProfile) return socket.emit('testTicketResult', { success: false, error: 'Profile not found.' });
         const deskConfig = activeProfile.desk;
 
-        // INJECT PIXEL & REWRITE LINKS HERE
+        // 🚨 ULTIMATE SMART SCANNER: Catches Plain Text AND HTML Links!
         let finalDescription = description;
-        if (enableTracking && deskConfig.cloudflareTrackingUrl) {
-            // 1. Inject the Open Pixel with /track.gif
-            const pixel = `<img src="${deskConfig.cloudflareTrackingUrl}/track.gif?email=${encodeURIComponent(email)}&ticketId=Test&profile=${encodeURIComponent(selectedProfileName)}" width="1" height="1" style="display:none;" />`;
-            finalDescription = description + pixel;
+        if (deskConfig.cloudflareTrackingUrl) {
+            const baseUrl = deskConfig.cloudflareTrackingUrl.replace(/\/$/, '');
+            const safeBaseUrl = baseUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); 
             
-            // 2. Automatically append ?email to short links
-            const shortenerBaseUrl = deskConfig.cloudflareTrackingUrl.replace(/\/$/, '');
-            const linkRegex = new RegExp(`href="(${shortenerBaseUrl}/[^"?]+)"`, 'g');
-            finalDescription = finalDescription.replace(linkRegex, `href="$1?email=${encodeURIComponent(email)}"`);
+            // 1. UNIVERSAL LINK MATCHER
+            const universalLinkRegex = new RegExp(`(${safeBaseUrl}[^\\s"'<>]*)`, 'g');
+            
+            finalDescription = finalDescription.replace(universalLinkRegex, (match) => {
+                if (match.includes('email=')) return match; 
+                const separator = match.includes('?') ? '&' : '?';
+                return `${match}${separator}email=${encodeURIComponent(email)}&profile=${encodeURIComponent(selectedProfileName)}&ticketId=Test`;
+            });
+
+            // 2. Inject the Open Pixel
+            const pixel = `<img src="${baseUrl}/track.gif?email=${encodeURIComponent(email)}&ticketId=Test&profile=${encodeURIComponent(selectedProfileName)}" width="1" height="1" alt="" style="display:none;" />`;
+            finalDescription += pixel;
         }
 
         const ticketData = { subject, description: finalDescription, departmentId: deskConfig.defaultDepartmentId, contact: { email }, channel: 'Email' };
@@ -130,7 +144,7 @@ const handleSendTestTicket = async (socket, data) => {
 };
 
 const handleStartBulkCreate = async (socket, data) => {
-    const { emails, subject, description, delay, selectedProfileName, sendDirectReply, verifyEmail, activeProfile, stopAfterFailures = 0, displayName, enableTracking } = data;
+    const { emails, subject, description, delay, selectedProfileName, sendDirectReply, verifyEmail, activeProfile, stopAfterFailures = 0, displayName } = data;
     
     console.log(`[Desk] Starting Bulk Job for ${selectedProfileName}. Total: ${emails.length} emails.`);
     const jobId = createJobId(socket.id, selectedProfileName, 'ticket');
@@ -163,19 +177,26 @@ const handleStartBulkCreate = async (socket, data) => {
 
             console.log(`[Desk] Processing (${i+1}/${emails.length}): ${email}`);
             
-			// INJECT PIXEL & REWRITE LINKS HERE
+            // 🚨 ULTIMATE SMART SCANNER: Catches Plain Text AND HTML Links!
             let finalDescription = description;
-            if (enableTracking && deskConfig.cloudflareTrackingUrl) {
-                // 1. Inject the Open Pixel with /track.gif
-                const pixel = `<img src="${deskConfig.cloudflareTrackingUrl}/track.gif?email=${encodeURIComponent(email)}&ticketId=Bulk&profile=${encodeURIComponent(selectedProfileName)}" width="1" height="1" style="display:none;" />`;
-                finalDescription = description + pixel;
+            if (deskConfig.cloudflareTrackingUrl) {
+                const baseUrl = deskConfig.cloudflareTrackingUrl.replace(/\/$/, '');
+                const safeBaseUrl = baseUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); 
                 
-                // 2. Automatically append ?email to short links
-                const shortenerBaseUrl = deskConfig.cloudflareTrackingUrl.replace(/\/$/, '');
-                const linkRegex = new RegExp(`href="(${shortenerBaseUrl}/[^"?]+)"`, 'g');
-                finalDescription = finalDescription.replace(linkRegex, `href="$1?email=${encodeURIComponent(email)}"`);
+                // 1. UNIVERSAL LINK MATCHER
+                const universalLinkRegex = new RegExp(`(${safeBaseUrl}[^\\s"'<>]*)`, 'g');
+                
+                finalDescription = finalDescription.replace(universalLinkRegex, (match) => {
+                    if (match.includes('email=')) return match; 
+                    const separator = match.includes('?') ? '&' : '?';
+                    return `${match}${separator}email=${encodeURIComponent(email)}&profile=${encodeURIComponent(selectedProfileName)}&ticketId=Bulk`;
+                });
+
+                // 2. Inject the Open Pixel
+                const pixel = `<img src="${baseUrl}/track.gif?email=${encodeURIComponent(email)}&ticketId=Bulk&profile=${encodeURIComponent(selectedProfileName)}" width="1" height="1" alt="" style="display:none;" />`;
+                finalDescription += pixel;
             }
-			
+            
             const ticketData = { subject, description: finalDescription, departmentId: deskConfig.defaultDepartmentId, contact: { email }, channel: 'Email', resolution: displayName };
             
             try {
