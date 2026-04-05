@@ -20,7 +20,7 @@ export interface TicketResult {
   details?: string;
   fullResponse?: any;
   timestamp?: Date | string; 
-  delugeStatus?: 'Success' | 'Failed' | 'Pending'; // --- NEW PROPERTY ---
+  delugeStatus?: 'Success' | 'Failed' | 'Pending'; 
 }
 
 interface ResultsDisplayProps {
@@ -34,7 +34,7 @@ interface ResultsDisplayProps {
   onRetry: () => void;
   socket: any; 
   activeProfileName: string;
-  showDelugeColumn: boolean; // --- NEW PROP ---
+  showDelugeColumn: boolean; 
 }
 
 const ITEMS_PER_PAGE = 10;
@@ -50,7 +50,7 @@ export const ResultsDisplay: React.FC<ResultsDisplayProps> = ({
   onRetry,
   socket,
   activeProfileName,
-  showDelugeColumn // --- NEW PROP DESTRUCTURED ---
+  showDelugeColumn 
 }) => {
   const [statusFilter, setStatusFilter] = useState<'all' | 'success' | 'failed'>('all');
   const [currentPage, setCurrentPage] = useState(1);
@@ -61,15 +61,29 @@ export const ResultsDisplay: React.FC<ResultsDisplayProps> = ({
   const [currentLogs, setCurrentLogs] = useState<any[]>([]);
   const [isFetchingLogs, setIsFetchingLogs] = useState(false);
 
-  // --- Filter Logic ---
+  // --- 🚨 BUG FIX 1: THE SEARCH LOGIC ---
   const filteredResults = useMemo(() => {
     return results.filter(r => {
-      const matchesText = !filterText || (
-        r.email.toLowerCase().includes(filterText.toLowerCase()) ||
-        (r.details || '').toLowerCase().includes(filterText.toLowerCase()) ||
-        (r.error || '').toLowerCase().includes(filterText.toLowerCase()) ||
-        (r.success ? 'success' : 'failed').includes(filterText.toLowerCase())
-      );
+      let matchesText = true;
+      
+      if (filterText) {
+          const searchLower = filterText.toLowerCase().trim();
+          
+          if (searchLower.includes('@')) {
+              // If they are searching for an email, ONLY search the email column! 
+              // This prevents accidentally matching other tickets' error messages.
+              matchesText = r.email.toLowerCase().includes(searchLower);
+          } else {
+              // Otherwise, search across all text fields
+              matchesText = (
+                  r.email.toLowerCase().includes(searchLower) ||
+                  (r.details || '').toLowerCase().includes(searchLower) ||
+                  (r.error || '').toLowerCase().includes(searchLower) ||
+                  (r.ticketNumber || '').toLowerCase().includes(searchLower) ||
+                  (r.success ? 'success' : 'failed').includes(searchLower)
+              );
+          }
+      }
 
       const matchesStatus = 
         statusFilter === 'all' ? true :
@@ -80,27 +94,26 @@ export const ResultsDisplay: React.FC<ResultsDisplayProps> = ({
     });
   }, [results, filterText, statusFilter]);
 
-  // --- Pagination Logic ---
   const reversedFilteredResults = useMemo(() => {
     return [...filteredResults].reverse(); 
   }, [filteredResults]);
 
-  const totalPages = Math.ceil(reversedFilteredResults.length / ITEMS_PER_PAGE);
+  const totalPages = Math.max(1, Math.ceil(reversedFilteredResults.length / ITEMS_PER_PAGE));
   
   useEffect(() => {
     setCurrentPage(1);
-  }, [filterText, statusFilter]);
+  }, [filterText, statusFilter, activeProfileName]);
 
   const currentData = useMemo(() => {
-    const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
+    const safePage = Math.min(currentPage, totalPages);
+    const startIndex = (safePage - 1) * ITEMS_PER_PAGE;
     return reversedFilteredResults.slice(startIndex, startIndex + ITEMS_PER_PAGE);
-  }, [reversedFilteredResults, currentPage]);
+  }, [reversedFilteredResults, currentPage, totalPages]);
 
   const successCount = results.filter(r => r.success).length;
   const errorCount = results.filter(r => !r.success).length;
   const progressPercent = totalTickets > 0 ? (results.length / totalTickets) * 100 : 0;
 
-  // Listen for the logs coming back from the server (for the manual view button)
   useEffect(() => {
     if (!socket) return;
     socket.on('ticketCommentsResult', (data: any) => {
@@ -115,7 +128,6 @@ export const ResultsDisplay: React.FC<ResultsDisplayProps> = ({
     return () => { socket.off('ticketCommentsResult'); };
   }, [socket]);
 
-  // Function to click the button and request logs
   const handleFetchLogs = (ticketId: string) => {
       setIsFetchingLogs(true);
       socket.emit('getTicketLogs', { 
@@ -284,8 +296,11 @@ export const ResultsDisplay: React.FC<ResultsDisplayProps> = ({
                     </thead>
                     <tbody className="bg-card divide-y divide-border">
                         {currentData.map((result, index) => {
-                        const actualIndex = (reversedFilteredResults.length) - ((currentPage - 1) * ITEMS_PER_PAGE + index);
-                        const rowKey = result.email || `row-${actualIndex}`;
+                        const safePage = Math.min(currentPage, totalPages);
+                        const actualIndex = (reversedFilteredResults.length) - ((safePage - 1) * ITEMS_PER_PAGE + index);
+                        
+                        // 🚨 BUG FIX 2: GLOBALLY UNIQUE KEY TO PREVENT REACT DUPLICATION!
+                        const rowKey = `unique-row-${actualIndex}-${index}`;
 
                         return (
                             <tr key={rowKey} className={`transition-colors hover:bg-muted/30 ${result.success ? 'bg-green-50/30 dark:bg-green-900/10' : 'bg-red-50/30 dark:bg-red-900/10'}`}>
@@ -309,7 +324,6 @@ export const ResultsDisplay: React.FC<ResultsDisplayProps> = ({
                                 )}
                             </td>
 
-                            {/* --- NEW DELUGE COLUMN DATA --- */}
                             {showDelugeColumn && (
                                 <td className="px-4 py-2">
                                     {result.delugeStatus === 'Success' ? (

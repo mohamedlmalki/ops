@@ -28,7 +28,7 @@ const interruptibleSleep = (ms, jobId) => {
 };
 
 const handleSendSingleTicket = async (data) => {
-    const { email, subject, description, selectedProfileName, sendDirectReply } = data;
+    const { email, subject, description, selectedProfileName, sendDirectReply, enableTracking } = data;
     if (!email || !selectedProfileName) return { success: false, error: 'Missing email or profile.' };
     const profiles = readProfiles();
     const activeProfile = profiles.find(p => p.profileName === selectedProfileName);
@@ -36,7 +36,21 @@ const handleSendSingleTicket = async (data) => {
     try {
         if (!activeProfile) return { success: false, error: 'Profile not found.' };
         const deskConfig = activeProfile.desk;
-        const ticketData = { subject, description, departmentId: deskConfig.defaultDepartmentId, contact: { email }, channel: 'Email' };
+
+        // INJECT PIXEL & REWRITE LINKS HERE
+        let finalDescription = description;
+        if (enableTracking && deskConfig.cloudflareTrackingUrl) {
+            // 1. Inject the Open Pixel with /track.gif
+            const pixel = `<img src="${deskConfig.cloudflareTrackingUrl}/track.gif?email=${encodeURIComponent(email)}&ticketId=Single&profile=${encodeURIComponent(selectedProfileName)}" width="1" height="1" style="display:none;" />`;
+            finalDescription = description + pixel;
+            
+            // 2. Automatically append ?email to short links
+            const shortenerBaseUrl = deskConfig.cloudflareTrackingUrl.replace(/\/$/, '');
+            const linkRegex = new RegExp(`href="(${shortenerBaseUrl}/[^"?]+)"`, 'g');
+            finalDescription = finalDescription.replace(linkRegex, `href="$1?email=${encodeURIComponent(email)}"`);
+        }
+
+        const ticketData = { subject, description: finalDescription, departmentId: deskConfig.defaultDepartmentId, contact: { email }, channel: 'Email' };
 
         const ticketResponse = await makeApiCall('post', '/api/v1/tickets', ticketData, activeProfile, 'desk');
         const newTicket = ticketResponse.data;
@@ -45,7 +59,7 @@ const handleSendSingleTicket = async (data) => {
 
         if (sendDirectReply) {
             try {
-                const replyData = { fromEmailAddress: deskConfig.fromEmailAddress, to: email, content: description, contentType: 'html', channel: 'EMAIL' };
+                const replyData = { fromEmailAddress: deskConfig.fromEmailAddress, to: email, content: finalDescription, contentType: 'html', channel: 'EMAIL' };
                 const replyResponse = await makeApiCall('post', `/api/v1/tickets/${newTicket.id}/sendReply`, replyData, activeProfile, 'desk');
                 fullResponseData.sendReply = replyResponse.data;
             } catch (replyError) { fullResponseData.sendReply = parseError(replyError); }
@@ -68,12 +82,26 @@ const handleVerifyTicketEmail = async (data) => {
 
 const handleSendTestTicket = async (socket, data) => {
     console.log(`[Desk] Sending Test Ticket to ${data.email}...`);
-    const { email, subject, description, selectedProfileName, sendDirectReply, verifyEmail, activeProfile } = data;
+    const { email, subject, description, selectedProfileName, sendDirectReply, verifyEmail, activeProfile, enableTracking } = data;
      if (!email || !selectedProfileName) return socket.emit('testTicketResult', { success: false, error: 'Missing email or profile.' });
     try {
         if (!activeProfile) return socket.emit('testTicketResult', { success: false, error: 'Profile not found.' });
         const deskConfig = activeProfile.desk;
-        const ticketData = { subject, description, departmentId: deskConfig.defaultDepartmentId, contact: { email }, channel: 'Email' };
+
+        // INJECT PIXEL & REWRITE LINKS HERE
+        let finalDescription = description;
+        if (enableTracking && deskConfig.cloudflareTrackingUrl) {
+            // 1. Inject the Open Pixel with /track.gif
+            const pixel = `<img src="${deskConfig.cloudflareTrackingUrl}/track.gif?email=${encodeURIComponent(email)}&ticketId=Test&profile=${encodeURIComponent(selectedProfileName)}" width="1" height="1" style="display:none;" />`;
+            finalDescription = description + pixel;
+            
+            // 2. Automatically append ?email to short links
+            const shortenerBaseUrl = deskConfig.cloudflareTrackingUrl.replace(/\/$/, '');
+            const linkRegex = new RegExp(`href="(${shortenerBaseUrl}/[^"?]+)"`, 'g');
+            finalDescription = finalDescription.replace(linkRegex, `href="$1?email=${encodeURIComponent(email)}"`);
+        }
+
+        const ticketData = { subject, description: finalDescription, departmentId: deskConfig.defaultDepartmentId, contact: { email }, channel: 'Email' };
 
         const ticketResponse = await makeApiCall('post', '/api/v1/tickets', ticketData, activeProfile, 'desk');
         const newTicket = ticketResponse.data;
@@ -82,7 +110,7 @@ const handleSendTestTicket = async (socket, data) => {
 
         if (sendDirectReply) {
             try {
-                const replyData = { fromEmailAddress: deskConfig.fromEmailAddress, to: email, content: description, contentType: 'html', channel: 'EMAIL' };
+                const replyData = { fromEmailAddress: deskConfig.fromEmailAddress, to: email, content: finalDescription, contentType: 'html', channel: 'EMAIL' };
                 const replyResponse = await makeApiCall('post', `/api/v1/tickets/${newTicket.id}/sendReply`, replyData, activeProfile, 'desk');
                 fullResponseData.sendReply = replyResponse.data;
             } catch (replyError) { fullResponseData.sendReply = parseError(replyError); }
@@ -102,7 +130,7 @@ const handleSendTestTicket = async (socket, data) => {
 };
 
 const handleStartBulkCreate = async (socket, data) => {
-    const { emails, subject, description, delay, selectedProfileName, sendDirectReply, verifyEmail, activeProfile, stopAfterFailures = 0, displayName } = data;
+    const { emails, subject, description, delay, selectedProfileName, sendDirectReply, verifyEmail, activeProfile, stopAfterFailures = 0, displayName, enableTracking } = data;
     
     console.log(`[Desk] Starting Bulk Job for ${selectedProfileName}. Total: ${emails.length} emails.`);
     const jobId = createJobId(socket.id, selectedProfileName, 'ticket');
@@ -118,7 +146,6 @@ const handleStartBulkCreate = async (socket, data) => {
             if (!activeJobs[jobId] || activeJobs[jobId].status === 'ended') break;
             while (activeJobs[jobId]?.status === 'paused') await new Promise(resolve => setTimeout(resolve, 500));
 
-            // Auto-pause check
             if (activeJobs[jobId].stopAfterFailures > 0 && activeJobs[jobId].consecutiveFailures >= activeJobs[jobId].stopAfterFailures) {
                  if (activeJobs[jobId].status !== 'paused') {
                      activeJobs[jobId].status = 'paused';
@@ -136,11 +163,17 @@ const handleStartBulkCreate = async (socket, data) => {
 
             console.log(`[Desk] Processing (${i+1}/${emails.length}): ${email}`);
             
-			// INJECT PIXEL HERE
+			// INJECT PIXEL & REWRITE LINKS HERE
             let finalDescription = description;
             if (enableTracking && deskConfig.cloudflareTrackingUrl) {
-                const pixel = `<img src="${deskConfig.cloudflareTrackingUrl}?email=${encodeURIComponent(email)}&ticketId=Bulk" width="1" height="1" style="display:none;" />`;
+                // 1. Inject the Open Pixel with /track.gif
+                const pixel = `<img src="${deskConfig.cloudflareTrackingUrl}/track.gif?email=${encodeURIComponent(email)}&ticketId=Bulk&profile=${encodeURIComponent(selectedProfileName)}" width="1" height="1" style="display:none;" />`;
                 finalDescription = description + pixel;
+                
+                // 2. Automatically append ?email to short links
+                const shortenerBaseUrl = deskConfig.cloudflareTrackingUrl.replace(/\/$/, '');
+                const linkRegex = new RegExp(`href="(${shortenerBaseUrl}/[^"?]+)"`, 'g');
+                finalDescription = finalDescription.replace(linkRegex, `href="$1?email=${encodeURIComponent(email)}"`);
             }
 			
             const ticketData = { subject, description: finalDescription, departmentId: deskConfig.defaultDepartmentId, contact: { email }, channel: 'Email', resolution: displayName };
@@ -155,7 +188,7 @@ const handleStartBulkCreate = async (socket, data) => {
 
                 if (sendDirectReply) {
                     try {
-                        const replyData = { fromEmailAddress: deskConfig.fromEmailAddress, to: email, content: description, contentType: 'html', channel: 'EMAIL' };
+                        const replyData = { fromEmailAddress: deskConfig.fromEmailAddress, to: email, content: finalDescription, contentType: 'html', channel: 'EMAIL' };
                         const replyResponse = await makeApiCall('post', `/api/v1/tickets/${newTicket.id}/sendReply`, replyData, activeProfile, 'desk');
                         successMessage += ` Reply sent.`;
                         fullResponseData.sendReply = replyResponse.data;
@@ -207,7 +240,6 @@ const verifyTicketEmail = async (socket, { ticket, profile, resultEventName = 't
     console.log(`[Desk] Verifying ticket #${ticket.ticketNumber} for ${email}...`);
     
     try {
-        // Delay to allow Zoho's internal async workflows to fire
         if (socket) await new Promise(resolve => setTimeout(resolve, 25000)); 
         
         if (jobId && activeJobs[jobId] && activeJobs[jobId].status === 'ended') return;
@@ -222,7 +254,6 @@ const verifyTicketEmail = async (socket, { ticket, profile, resultEventName = 't
 
         if (allHistoryEvents.length > 0) {
             
-            // SMART PARSER FOR AUTOMATION HISTORY
             let eventDetails = [];
             allHistoryEvents.forEach(evt => {
                 let detailStr = '';
@@ -425,7 +456,6 @@ const handleUpdateMailReplyAddressDetails = async (socket, data) => {
     }
 };
 
-// --- NEW RESTORED DESK AUTO-FETCH FUNCTIONS ---
 const handleGetDeskOrganizations = async (socket, data) => {
     try {
         const profile = data.activeProfile || data.profile || data;
@@ -468,7 +498,6 @@ const handleGetDeskMailAddresses = async (socket, data) => {
     }
 };
 
-// --- UPDATED EXPORTS ---
 module.exports = {
     setActiveJobs,
     handleSendTestTicket,

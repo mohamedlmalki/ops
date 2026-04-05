@@ -11,7 +11,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { 
     Send, Eye, Mail, Clock, MessageSquare, Users, Pause, Play, Square, 
     Bot, Upload, RefreshCw, Trash2, MailWarning, CheckCircle2, 
-    XCircle, ImagePlus, AlertTriangle, RotateCcw, Sparkles, Edit 
+    XCircle, ImagePlus, AlertTriangle, RotateCcw, Sparkles, Edit, 
+    BarChart3 // <-- NEW ICON
 } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/hooks/use-toast';
@@ -19,6 +20,8 @@ import { Socket } from 'socket.io-client';
 import { Profile, JobState } from '@/App';
 import { formatTime } from '@/lib/utils';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Separator } from '@/components/ui/separator';
+import { TrackingAnalytics } from './TrackingAnalytics'; // <-- NEW IMPORT
 
 export interface TicketFormData {
   emails: string;
@@ -30,7 +33,7 @@ export interface TicketFormData {
   displayName: string;
   stopAfterFailures: number; 
   senderName: string; 
-  enableTracking: boolean; // <-- ADD THIS
+  enableTracking: boolean; 
 }
 
 interface TicketFormProps {
@@ -81,6 +84,7 @@ export const TicketForm: React.FC<TicketFormProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
   const [isLoadingName, setIsLoadingName] = useState(false);
+  const [isAnalyticsOpen, setIsAnalyticsOpen] = useState(false); // <-- NEW STATE FOR ANALYTICS DRAWER
   
   // Set default Auto-Pause to 4 if it's currently 0 or undefined
   useEffect(() => {
@@ -150,7 +154,6 @@ export const TicketForm: React.FC<TicketFormProps> = ({
       onFormDataChange({ ...formData, [field]: value }); 
   };
   
-  // --- FIXED MUTUALLY EXCLUSIVE CHECKBOX HANDLER ---
   const handleCheckboxChange = (field: 'sendDirectReply' | 'verifyEmail' | 'enableTracking', checked: boolean) => { 
       const newData = { ...formData, [field]: checked };
       
@@ -179,237 +182,257 @@ export const TicketForm: React.FC<TicketFormProps> = ({
   const errorCount = jobState?.results.filter(r => !r.success).length || 0;
 
   return (
-    <Card className="shadow-medium hover:shadow-large transition-all duration-300">
-      <CardHeader>
-        <div className="flex items-start justify-between">
-          <div>
-            <CardTitle className="flex items-center space-x-2 text-lg">
-              <Send className="h-5 w-5 text-primary" />
-              <span>Create Bulk Tickets</span>
-            </CardTitle>
+    <>
+      <Card className="shadow-medium hover:shadow-large transition-all duration-300">
+        <CardHeader>
+          <div className="flex items-start justify-between">
+            <div>
+              <CardTitle className="flex items-center space-x-2 text-lg">
+                <Send className="h-5 w-5 text-primary" />
+                <span>Create Bulk Tickets</span>
+              </CardTitle>
+            </div>
+            <div className="flex items-center space-x-2">
+              {/* NEW LIVE ANALYTICS BUTTON */}
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={() => setIsAnalyticsOpen(true)}
+                className="bg-blue-50/50 text-blue-700 border-blue-200 hover:bg-blue-100 hover:text-blue-800 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-800"
+              >
+                  <BarChart3 className="h-4 w-4 mr-2" />
+                  Live Analytics
+              </Button>
+              <Button variant="outline" size="sm" onClick={onClearTicketLogs}>
+                  <Trash2 className="h-4 w-4 mr-2"/>
+                  Clear Logs
+              </Button>
+              <Button variant="outline" size="sm" onClick={onFetchFailures}>
+                  <MailWarning className="h-4 w-4 mr-2"/>
+                  Failures
+              </Button>
+            </div>
           </div>
-          <div className="flex items-center space-x-2">
-            <Button variant="outline" size="sm" onClick={onClearTicketLogs}>
-                <Trash2 className="h-4 w-4 mr-2"/>
-                Clear Logs
-            </Button>
-            <Button variant="outline" size="sm" onClick={onFetchFailures}>
-                <MailWarning className="h-4 w-4 mr-2"/>
-                Failures
-            </Button>
-          </div>
-        </div>
-      </CardHeader>
+        </CardHeader>
 
-      <CardContent>
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            
-            {/* LEFT COLUMN */}
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="emails" className="flex items-center space-x-2">
-                    <Mail className="h-4 w-4" />
-                    <span>Recipient Emails</span>
-                  </Label>
-                  <div className='flex items-center space-x-2'>
-                    <Button 
-                        type="button" 
-                        variant="ghost" 
-                        size="sm" 
-                        className="h-7 text-xs text-blue-600 hover:text-blue-800 hover:bg-blue-50"
-                        onClick={handleCleanEmails}
-                        disabled={isProcessing || !formData.emails}
-                        title="Remove duplicates and fix formatting"
-                    >
-                        <Sparkles className="h-3 w-3 mr-1" />
-                        Clean List
-                    </Button>
-                    <input type="file" ref={fileInputRef} className="hidden" accept=".csv,.txt" onChange={handleFileImport} />
-                    <Button type="button" variant="outline" size="sm" onClick={() => fileInputRef.current?.click()} disabled={isProcessing}>
-                      <Upload className="h-3 w-3 mr-2" />
-                      Import
-                    </Button>
-                    <Badge variant="secondary" className="text-xs">
-                      <Users className="h-3 w-3 mr-1" />
-                      {emailCount}
-                    </Badge>
+        <CardContent>
+          <form onSubmit={handleSubmit} className="space-y-6">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              
+              {/* LEFT COLUMN */}
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="emails" className="flex items-center space-x-2">
+                      <Mail className="h-4 w-4" />
+                      <span>Recipient Emails</span>
+                    </Label>
+                    <div className='flex items-center space-x-2'>
+                      <Button 
+                          type="button" 
+                          variant="ghost" 
+                          size="sm" 
+                          className="h-7 text-xs text-blue-600 hover:text-blue-800 hover:bg-blue-50"
+                          onClick={handleCleanEmails}
+                          disabled={isProcessing || !formData.emails}
+                          title="Remove duplicates and fix formatting"
+                      >
+                          <Sparkles className="h-3 w-3 mr-1" />
+                          Clean List
+                      </Button>
+                      <input type="file" ref={fileInputRef} className="hidden" accept=".csv,.txt" onChange={handleFileImport} />
+                      <Button type="button" variant="outline" size="sm" onClick={() => fileInputRef.current?.click()} disabled={isProcessing}>
+                        <Upload className="h-3 w-3 mr-2" />
+                        Import
+                      </Button>
+                      <Badge variant="secondary" className="text-xs">
+                        <Users className="h-3 w-3 mr-1" />
+                        {emailCount}
+                      </Badge>
+                    </div>
                   </div>
+                  <Textarea
+                    id="emails"
+                    placeholder="user1@example.com&#10;user2@example.com"
+                    value={formData.emails}
+                    onChange={(e) => handleInputChange('emails', e.target.value)}
+                    className="min-h-[200px] font-mono text-sm bg-muted/30 border-border focus:bg-card transition-colors"
+                    required
+                    disabled={isProcessing}
+                  />
+                  
+                  {/* TIMERS AND COUNTERS */}
+                  {jobState && (jobState.isProcessing || jobState.results.length > 0) && (
+                      <div className="pt-4 border-t border-dashed">
+                          <div className="grid grid-cols-4 gap-4 text-center">
+                              <div><Label className="text-xs text-muted-foreground">Time Elapsed</Label><p className="text-lg font-bold font-mono">{formatTime(jobState.processingTime)}</p></div>
+                              <div><Label className="text-xs text-muted-foreground">Success</Label><p className="text-lg font-bold font-mono text-success flex items-center justify-center space-x-1"><CheckCircle2 className="h-4 w-4" /><span>{successCount}</span></p></div>
+                              <div><Label className="text-xs text-muted-foreground">Failed</Label><p className="text-lg font-bold font-mono text-destructive flex items-center justify-center space-x-1"><XCircle className="h-4 w-4" /><span>{errorCount}</span></p></div>
+                              <div><Label className="text-xs text-muted-foreground">Remaining</Label><p className="text-lg font-bold font-mono text-muted-foreground flex items-center justify-center space-x-1"><Clock className="h-4 w-4" /><span>{(jobState.totalTicketsToProcess || 0) - (jobState.results.length || 0)}</span></p></div>
+                          </div>
+                      </div>
+                  )}
                 </div>
-                <Textarea
-                  id="emails"
-                  placeholder="user1@example.com&#10;user2@example.com"
-                  value={formData.emails}
-                  onChange={(e) => handleInputChange('emails', e.target.value)}
-                  className="min-h-[200px] font-mono text-sm bg-muted/30 border-border focus:bg-card transition-colors"
-                  required
-                  disabled={isProcessing}
-                />
-                
-                {/* TIMERS AND COUNTERS */}
-                {jobState && (jobState.isProcessing || jobState.results.length > 0) && (
-                    <div className="pt-4 border-t border-dashed">
-                        <div className="grid grid-cols-4 gap-4 text-center">
-                            <div><Label className="text-xs text-muted-foreground">Time Elapsed</Label><p className="text-lg font-bold font-mono">{formatTime(jobState.processingTime)}</p></div>
-                            <div><Label className="text-xs text-muted-foreground">Success</Label><p className="text-lg font-bold font-mono text-success flex items-center justify-center space-x-1"><CheckCircle2 className="h-4 w-4" /><span>{successCount}</span></p></div>
-                            <div><Label className="text-xs text-muted-foreground">Failed</Label><p className="text-lg font-bold font-mono text-destructive flex items-center justify-center space-x-1"><XCircle className="h-4 w-4" /><span>{errorCount}</span></p></div>
-                            <div><Label className="text-xs text-muted-foreground">Remaining</Label><p className="text-lg font-bold font-mono text-muted-foreground flex items-center justify-center space-x-1"><Clock className="h-4 w-4" /><span>{(jobState.totalTicketsToProcess || 0) - (jobState.results.length || 0)}</span></p></div>
+
+                {/* GROUPED SETTINGS */}
+                <div className="pt-4 border-t border-border/50">
+                    <div className="grid grid-cols-2 gap-4 mb-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="delay" className="flex items-center space-x-2"><Clock className="h-4 w-4" /><span>Delay (Sec)</span></Label>
+                          <div className="flex items-center space-x-3">
+                            <Input id="delay" type="number" min="0" step="1" value={formData.delay} onChange={(e) => handleInputChange('delay', parseInt(e.target.value) || 0)} className="bg-muted/30 border-border focus:bg-card" required disabled={isProcessing} />
+                          </div>
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="stopAfterFailures" className="flex items-center space-x-2"><AlertTriangle className="h-4 w-4 text-amber-500" /><span>Auto-Pause</span></Label>
+                          <div className="flex items-center space-x-3">
+                            <Input id="stopAfterFailures" type="number" min="0" step="1" placeholder="0 (Disabled)" value={formData.stopAfterFailures} onChange={(e) => handleInputChange('stopAfterFailures', e.target.value === '' ? 0 : parseInt(e.target.value))} className="bg-muted/30 border-border focus:bg-card" disabled={isProcessing} />
+                          </div>
                         </div>
                     </div>
-                )}
-              </div>
 
-              {/* GROUPED SETTINGS: DELAY, AUTO-PAUSE, AND OPTIONAL ACTIONS */}
-              <div className="pt-4 border-t border-border/50">
-                  <div className="grid grid-cols-2 gap-4 mb-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="delay" className="flex items-center space-x-2"><Clock className="h-4 w-4" /><span>Delay (Sec)</span></Label>
-                        <div className="flex items-center space-x-3">
-                          <Input id="delay" type="number" min="0" step="1" value={formData.delay} onChange={(e) => handleInputChange('delay', parseInt(e.target.value) || 0)} className="bg-muted/30 border-border focus:bg-card" required disabled={isProcessing} />
+                    {/* MUTUALLY EXCLUSIVE CHECKBOXES */}
+                    <div className="space-y-2">
+                        <Label className="flex items-center space-x-2"><Bot className="h-4 w-4" /><span>Optional Email Actions</span></Label>
+                        <div className="space-y-4 rounded-lg bg-muted/30 p-4 border border-border">
+                          <div className="flex items-start space-x-3">
+                              <Checkbox 
+                                  id="sendDirectReply" 
+                                  checked={formData.sendDirectReply} 
+                                  onCheckedChange={(checked) => handleCheckboxChange('sendDirectReply', !!checked)} 
+                                  disabled={isProcessing} 
+                              />
+                              <div className="grid gap-1.5 leading-none">
+                                  <Label htmlFor="sendDirectReply" className="font-medium hover:cursor-pointer">Send Direct Public Reply</Label>
+                                  <p className="text-xs text-muted-foreground">Disables automation. Sends description as email.</p>
+                              </div>
+                          </div>
+                          <div className="flex items-start space-x-3">
+                              <Checkbox 
+                                  id="verifyEmail" 
+                                  checked={formData.verifyEmail} 
+                                  onCheckedChange={(checked) => handleCheckboxChange('verifyEmail', !!checked)} 
+                                  disabled={isProcessing} 
+                              />
+                              <div className="grid gap-1.5 leading-none">
+                                  <Label htmlFor="verifyEmail" className="font-medium hover:cursor-pointer">Verify Automation Email</Label>
+                                  <p className="text-xs text-muted-foreground">Slower. Checks if automation was triggered.</p>
+                              </div>
+                          </div>   
+                          {/* TRACKING CHECKBOX */}
+                          <Separator className="my-2" />
+                          <div className="flex items-start space-x-3">
+                              <Checkbox 
+                                  id="enableTracking" 
+                                  checked={formData.enableTracking} 
+                                  onCheckedChange={(checked) => handleCheckboxChange('enableTracking', !!checked)} 
+                                  disabled={isProcessing || !selectedProfile?.desk?.cloudflareTrackingUrl} 
+                              />
+                              <div className="grid gap-1.5 leading-none">
+                                  <Label htmlFor="enableTracking" className="font-medium hover:cursor-pointer flex items-center space-x-1">
+                                      <span>Inject Cloudflare Tracker</span>
+                                      {!selectedProfile?.desk?.cloudflareTrackingUrl && <span className="text-[10px] text-destructive">(URL missing in Profile)</span>}
+                                  </Label>
+                                  <p className="text-xs text-muted-foreground">Appends invisible 1x1 pixel to detect opens instantly.</p>
+                              </div>
+                          </div>
                         </div>
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="stopAfterFailures" className="flex items-center space-x-2"><AlertTriangle className="h-4 w-4 text-amber-500" /><span>Auto-Pause</span></Label>
-                        <div className="flex items-center space-x-3">
-                          <Input id="stopAfterFailures" type="number" min="0" step="1" placeholder="0 (Disabled)" value={formData.stopAfterFailures} onChange={(e) => handleInputChange('stopAfterFailures', e.target.value === '' ? 0 : parseInt(e.target.value))} className="bg-muted/30 border-border focus:bg-card" disabled={isProcessing} />
-                        </div>
-                      </div>
-                  </div>
-
-                  {/* FIXED MUTUALLY EXCLUSIVE CHECKBOXES */}
-                  <div className="space-y-2">
-                      <Label className="flex items-center space-x-2"><Bot className="h-4 w-4" /><span>Optional Email Actions</span></Label>
-                      <div className="space-y-4 rounded-lg bg-muted/30 p-4 border border-border">
-                        <div className="flex items-start space-x-3">
-                            <Checkbox 
-                                id="sendDirectReply" 
-                                checked={formData.sendDirectReply} 
-                                onCheckedChange={(checked) => handleCheckboxChange('sendDirectReply', !!checked)} 
-                                disabled={isProcessing} 
-                            />
-                            <div className="grid gap-1.5 leading-none">
-                                <Label htmlFor="sendDirectReply" className="font-medium hover:cursor-pointer">Send Direct Public Reply</Label>
-                                <p className="text-xs text-muted-foreground">Disables automation. Sends description as email.</p>
-                            </div>
-                        </div>
-                        <div className="flex items-start space-x-3">
-                            <Checkbox 
-                                id="verifyEmail" 
-                                checked={formData.verifyEmail} 
-                                onCheckedChange={(checked) => handleCheckboxChange('verifyEmail', !!checked)} 
-                                disabled={isProcessing} 
-                            />
-                            <div className="grid gap-1.5 leading-none">
-                                <Label htmlFor="verifyEmail" className="font-medium hover:cursor-pointer">Verify Automation Email</Label>
-                                <p className="text-xs text-muted-foreground">Slower. Checks if automation was triggered.</p>
-                            </div>
-                        </div>   
-						{/* NEW TRACKING CHECKBOX */}
-                        <Separator className="my-2" />
-                        <div className="flex items-start space-x-3">
-                            <Checkbox 
-                                id="enableTracking" 
-                                checked={formData.enableTracking} 
-                                onCheckedChange={(checked) => handleCheckboxChange('enableTracking', !!checked)} 
-                                disabled={isProcessing || !selectedProfile?.desk?.cloudflareTrackingUrl} 
-                            />
-                            <div className="grid gap-1.5 leading-none">
-                                <Label htmlFor="enableTracking" className="font-medium hover:cursor-pointer flex items-center space-x-1">
-                                    <span>Inject Cloudflare Tracker</span>
-                                    {!selectedProfile?.desk?.cloudflareTrackingUrl && <span className="text-[10px] text-destructive">(URL missing in Profile)</span>}
-                                </Label>
-                                <p className="text-xs text-muted-foreground">Appends invisible 1x1 pixel to detect opens instantly.</p>
-                            </div>
-                        </div>
-                      </div>
-                  </div>
-              </div>
-            </div>
-
-            {/* RIGHT COLUMN */}
-            <div className="space-y-4">
-              
-              {/* SENDER NAMES */}
-              <div className="space-y-2">
-                <Label htmlFor="displayName" className="flex items-center space-x-2">
-                    <Edit className="h-4 w-4" /><span>Sender Name (Native Zoho)</span>
-                </Label>
-                <div className="flex items-center space-x-2">
-                    <Input id="displayName" value={formData.displayName} onChange={(e) => handleInputChange('displayName', e.target.value)} placeholder={isLoadingName ? "Loading..." : "Not configured"} disabled={!selectedProfile?.desk?.mailReplyAddressId || isLoadingName} />
-                    <Button type="button" size="sm" onClick={handleUpdateName} disabled={!selectedProfile?.desk?.mailReplyAddressId || isLoadingName || formData.displayName === 'N/A'}>Update</Button>
-                    <Button type="button" size="icon" variant="ghost" onClick={fetchDisplayName} disabled={!selectedProfile?.desk?.mailReplyAddressId || isLoadingName}>
-                        <RefreshCw className={`h-4 w-4 ${isLoadingName ? 'animate-spin' : ''}`} />
-                    </Button>
+                    </div>
                 </div>
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="senderName" className="flex items-center space-x-2">
-                    <Sparkles className="h-4 w-4 text-green-500" /><span>Sender Name (Deluge Workflow)</span>
-                </Label>
-                <Input id="senderName" placeholder="e.g., Vibrobet Support" value={formData.senderName || ''} onChange={(e) => handleInputChange('senderName', e.target.value)} className="h-10 bg-muted/30 border-border focus:bg-card transition-colors" disabled={isProcessing} />
-                <p className="text-[10px] text-muted-foreground">This injects the name into the Resolution field for the custom Deluge script.</p>
-              </div>
-
-              {/* TICKET SUBJECT */}
-              <div className="space-y-2 mt-4">
-                <Label htmlFor="subject" className="flex items-center space-x-2"><MessageSquare className="h-4 w-4" /><span>Ticket Subject</span></Label>
-                <Input id="subject" placeholder="Enter ticket subject..." value={formData.subject} onChange={(e) => handleInputChange('subject', e.target.value)} className="h-12 bg-muted/30 border-border focus:bg-card transition-colors" required disabled={isProcessing} />
-              </div>
-
-              {/* TICKET DESCRIPTION */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="description" className="flex items-center space-x-2"><MessageSquare className="h-4 w-4" /><span>Ticket Description</span></Label>
+              {/* RIGHT COLUMN */}
+              <div className="space-y-4">
+                
+                {/* SENDER NAMES */}
+                <div className="space-y-2">
+                  <Label htmlFor="displayName" className="flex items-center space-x-2">
+                      <Edit className="h-4 w-4" /><span>Sender Name (Native Zoho)</span>
+                  </Label>
                   <div className="flex items-center space-x-2">
-                    <ImageToolDialog onApply={handleApplyImage} />
-                    <Dialog>
-                      <DialogTrigger asChild><Button variant="ghost" size="sm" className="h-7 px-2 text-xs"><Eye className="h-3 w-3 mr-1" />Preview</Button></DialogTrigger>
-                      <DialogContent className="max-w-2xl bg-card border-border shadow-large"><DialogHeader><DialogTitle>Description Preview</DialogTitle></DialogHeader><div className="p-4 bg-muted/30 rounded-lg border border-border max-h-96 overflow-y-auto" dangerouslySetInnerHTML={{ __html: formData.description }} /></DialogContent>
-                    </Dialog>
+                      <Input id="displayName" value={formData.displayName} onChange={(e) => handleInputChange('displayName', e.target.value)} placeholder={isLoadingName ? "Loading..." : "Not configured"} disabled={!selectedProfile?.desk?.mailReplyAddressId || isLoadingName} />
+                      <Button type="button" size="sm" onClick={handleUpdateName} disabled={!selectedProfile?.desk?.mailReplyAddressId || isLoadingName || formData.displayName === 'N/A'}>Update</Button>
+                      <Button type="button" size="icon" variant="ghost" onClick={fetchDisplayName} disabled={!selectedProfile?.desk?.mailReplyAddressId || isLoadingName}>
+                          <RefreshCw className={`h-4 w-4 ${isLoadingName ? 'animate-spin' : ''}`} />
+                      </Button>
                   </div>
                 </div>
-                <Textarea 
-                  id="description" 
-                  placeholder="Enter ticket description (HTML supported)..." 
-                  value={formData.description} 
-                  onChange={(e) => handleInputChange('description', e.target.value)} 
-                  className="min-h-[245px] bg-muted/30 border-border focus:bg-card transition-colors" 
-                  required 
-                  disabled={isProcessing} 
-                />
+
+                <div className="space-y-2">
+                  <Label htmlFor="senderName" className="flex items-center space-x-2">
+                      <Sparkles className="h-4 w-4 text-green-500" /><span>Sender Name (Deluge Workflow)</span>
+                  </Label>
+                  <Input id="senderName" placeholder="e.g., Vibrobet Support" value={formData.senderName || ''} onChange={(e) => handleInputChange('senderName', e.target.value)} className="h-10 bg-muted/30 border-border focus:bg-card transition-colors" disabled={isProcessing} />
+                  <p className="text-[10px] text-muted-foreground">This injects the name into the Resolution field for the custom Deluge script.</p>
+                </div>
+
+                {/* TICKET SUBJECT */}
+                <div className="space-y-2 mt-4">
+                  <Label htmlFor="subject" className="flex items-center space-x-2"><MessageSquare className="h-4 w-4" /><span>Ticket Subject</span></Label>
+                  <Input id="subject" placeholder="Enter ticket subject..." value={formData.subject} onChange={(e) => handleInputChange('subject', e.target.value)} className="h-12 bg-muted/30 border-border focus:bg-card transition-colors" required disabled={isProcessing} />
+                </div>
+
+                {/* TICKET DESCRIPTION */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="description" className="flex items-center space-x-2"><MessageSquare className="h-4 w-4" /><span>Ticket Description</span></Label>
+                    <div className="flex items-center space-x-2">
+                      <ImageToolDialog onApply={handleApplyImage} />
+                      <Dialog>
+                        <DialogTrigger asChild><Button variant="ghost" size="sm" className="h-7 px-2 text-xs"><Eye className="h-3 w-3 mr-1" />Preview</Button></DialogTrigger>
+                        <DialogContent className="max-w-2xl bg-card border-border shadow-large"><DialogHeader><DialogTitle>Description Preview</DialogTitle></DialogHeader><div className="p-4 bg-muted/30 rounded-lg border border-border max-h-96 overflow-y-auto" dangerouslySetInnerHTML={{ __html: formData.description }} /></DialogContent>
+                      </Dialog>
+                    </div>
+                  </div>
+                  <Textarea 
+                    id="description" 
+                    placeholder="Enter ticket description (HTML supported)..." 
+                    value={formData.description} 
+                    onChange={(e) => handleInputChange('description', e.target.value)} 
+                    className="min-h-[245px] bg-muted/30 border-border focus:bg-card transition-colors" 
+                    required 
+                    disabled={isProcessing} 
+                  />
+                </div>
               </div>
             </div>
-          </div>
 
-          <div className="pt-4 border-t border-border">
-            {!isProcessing ? (
-              <div className="flex gap-3">
-                <Button type="submit" variant="premium" size="lg" disabled={!formData.emails.trim() || !formData.subject.trim() || !formData.description.trim()} className="flex-1">
-                    <Send className="h-4 w-4 mr-2" />
-                    Create {emailCount} Tickets
-                </Button>
-                {failedCount > 0 && (
-                     <Button type="button" variant="secondary" size="lg" className="border-red-200 hover:bg-red-50 text-red-700" onClick={(e) => { e.preventDefault(); onRetryFailed(); }}>
-                        <RotateCcw className="mr-2 h-4 w-4" />
-                        Retry Failed ({failedCount})
-                     </Button>
-                )}
-              </div>
-            ) : (
-              <div className="flex items-center justify-center space-x-4">
-                <Button type="button" variant="secondary" size="lg" onClick={onPauseResume} className="flex-1">
-                  {isPaused ? <><Play className="h-4 w-4 mr-2" />Resume Job</> : <><Pause className="h-4 w-4 mr-2" />Pause Job</>}
-                </Button>
-                <Button type="button" variant="destructive" size="lg" onClick={onEndJob} className="flex-1">
-                  <Square className="h-4 w-4 mr-2" />End Job
-                </Button>
-              </div>
-            )}
-          </div>
-        </form>
-      </CardContent>
-    </Card>
+            <div className="pt-4 border-t border-border">
+              {!isProcessing ? (
+                <div className="flex gap-3">
+                  <Button type="submit" variant="premium" size="lg" disabled={!formData.emails.trim() || !formData.subject.trim() || !formData.description.trim()} className="flex-1">
+                      <Send className="h-4 w-4 mr-2" />
+                      Create {emailCount} Tickets
+                  </Button>
+                  {failedCount > 0 && (
+                       <Button type="button" variant="secondary" size="lg" className="border-red-200 hover:bg-red-50 text-red-700" onClick={(e) => { e.preventDefault(); onRetryFailed(); }}>
+                          <RotateCcw className="mr-2 h-4 w-4" />
+                          Retry Failed ({failedCount})
+                       </Button>
+                  )}
+                </div>
+              ) : (
+                <div className="flex items-center justify-center space-x-4">
+                  <Button type="button" variant="secondary" size="lg" onClick={onPauseResume} className="flex-1">
+                    {isPaused ? <><Play className="h-4 w-4 mr-2" />Resume Job</> : <><Pause className="h-4 w-4 mr-2" />Pause Job</>}
+                  </Button>
+                  <Button type="button" variant="destructive" size="lg" onClick={onEndJob} className="flex-1">
+                    <Square className="h-4 w-4 mr-2" />End Job
+                  </Button>
+                </div>
+              )}
+            </div>
+          </form>
+        </CardContent>
+      </Card>
+
+      {/* THE NEW ANALYTICS DRAWER */}
+      <TrackingAnalytics 
+        isOpen={isAnalyticsOpen} 
+        onClose={() => setIsAnalyticsOpen(false)} 
+        trackingUrl={selectedProfile?.desk?.cloudflareTrackingUrl || ''} 
+        profileName={selectedProfile?.profileName || 'Unknown'} // <-- ADD THIS LINE!
+      />
+    </>
   );
 };

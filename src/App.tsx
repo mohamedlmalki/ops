@@ -650,7 +650,7 @@ const createInitialBookingJobState = (): BookingJobState => ({
 });
 
 
-// 櫨 THE GOD MODE CACHE HOOK
+// 櫨 THE GOD MODE CACHE HOOK (WITH MEMORY SAVER)
 function usePersistentJobs<T>(storageKey: string, initialValue: T) {
     const [state, setState] = useState<T>(() => {
         try {
@@ -660,11 +660,11 @@ function usePersistentJobs<T>(storageKey: string, initialValue: T) {
                 const safeState: any = {};
                 for (const profile in parsed) {
                     const job = parsed[profile];
-                    const wasActive = job.isProcessing && !job.isPaused;
                     safeState[profile] = {
                         ...job,
-                        isProcessing: job.isProcessing || wasActive, 
-                        isPaused: job.isPaused || wasActive
+                        // FIX 1: Do NOT force the job to pause on reload! Let it continue naturally.
+                        isProcessing: job.isProcessing, 
+                        isPaused: job.isPaused
                     };
                 }
                 return safeState as T;
@@ -677,9 +677,22 @@ function usePersistentJobs<T>(storageKey: string, initialValue: T) {
 
     useEffect(() => {
         try {
-            window.localStorage.setItem(storageKey, JSON.stringify(state));
+            // FIX 2: MEMORY SAVER (Prevents "Out of Memory" crashes on 500+ tickets)
+            const lightState: any = {};
+            for (const profile in state) {
+                const job = (state as any)[profile];
+                lightState[profile] = {
+                    ...job,
+                    // Strip out the massive 'fullResponse' JSON from results before saving to browser storage
+                    results: job.results ? job.results.map((r: any) => ({
+                        ...r,
+                        fullResponse: undefined // Removes the heavy data so the browser stays lightning fast!
+                    })) : []
+                };
+            }
+            window.localStorage.setItem(storageKey, JSON.stringify(lightState));
         } catch (error) {
-            console.warn(`Error saving to localStorage (Storage might be full):`, error);
+            console.warn(`Error saving to localStorage:`, error);
         }
     }, [state, storageKey]);
 
@@ -762,13 +775,15 @@ const MainApp = () => {
                                     const logTime = new Date(log.openedAt).getTime();
                                     const now = new Date().getTime();
                                     
-                                    if (now - logTime < 120000) {
-                                        toast({
-                                            title: "👁️ Email Opened!",
-                                            description: `${log.email} just viewed their ticket.`,
-                                            className: "bg-emerald-500 text-white border-emerald-600 shadow-lg",
-                                        });
-                                    }
+									
+                                   // if (now - logTime < 120000) {
+                                  //      // 🚨 DELETE OR COMMENT OUT THIS TOAST BLOCK 🚨
+                                  //      toast({
+                                  //          title: "👁️ Email Opened!",
+                                 //           description: `${log.email} just viewed their ticket.`,
+                                  //          className: "bg-emerald-500 text-white border-emerald-600 shadow-lg",
+                                 //       });
+                                  //  }
                                 }
                             });
                         }
@@ -797,8 +812,25 @@ const MainApp = () => {
             // 櫨 FIX: Check server immediately on connection to prevent locked caches!
             socket.emit('requestActiveJobs');
         });
+          
+		// ==========================================
+        // 🚨 TAB WAKE-UP FIX: PREVENT BROWSER FREEZING
+        // ==========================================
+        const handleWakeUp = () => {
+            if (document.visibilityState === 'visible') {
+                // If the browser dropped the connection while asleep, force it back!
+                if (!socket.connected) {
+                    console.log("Tab woke up: Forcing Socket Reconnection...");
+                    socket.connect();
+                }
+                // Ask the server what jobs are actually still running
+                socket.emit('requestActiveJobs');
+            }
+        };
+        document.addEventListener("visibilitychange", handleWakeUp);
+        // ==========================================  
 
-        // 櫨 FIX: Clean up any front-end jobs that the server doesn't know about anymore (e.g. PC Rebooted)
+        // 🚨 THE "GHOST ID" FIX: Allow flexible ID matching so the UI doesn't kill the job!
         socket.on('activeJobsSync', (serverActiveJobs: string[]) => {
             const cleanupStuckJobs = (jobsObj: any, setJobsFn: any, jobType: string) => {
                 let hasChanges = false;
@@ -808,7 +840,12 @@ const MainApp = () => {
                     const job = safeState[profile];
                     const expectedJobId = `${profile}_${jobType}`;
                     
-                    if ((job.isProcessing || job.isPaused) && !serverActiveJobs.includes(expectedJobId)) {
+                    // THE MAGIC FIX: Check if ANY server job ENDS with our expected ID!
+                    const isJobActuallyRunning = serverActiveJobs.some(id => 
+                        id === expectedJobId || id.endsWith(`_${expectedJobId}`)
+                    );
+
+                    if ((job.isProcessing || job.isPaused) && !isJobActuallyRunning) {
                         safeState[profile] = {
                             ...job,
                             isProcessing: false,
@@ -844,7 +881,7 @@ const MainApp = () => {
               [result.profileName]: {
                 ...profileJob,
                 results: [...profileJob.results, resultWithTime], 
-                countdown: isLastTicket ? 0 : profileJob.currentDelay,
+                countdown: isLastTicket ? 0 : profileJob.formData.delay, // <-- FIXED
               }
             };
           });
@@ -903,7 +940,7 @@ const MainApp = () => {
                     [result.profileName]: {
                         ...profileJob,
                         results: newResults,
-                        countdown: isLast ? 0 : profileJob.currentDelay,
+                        countdown: isLast ? 0 : profileJob.formData.delay, // <-- FIXED
                     }
                 };
             });
@@ -917,7 +954,7 @@ const MainApp = () => {
               [result.profileName]: {
                 ...profileJob,
                 results: [...profileJob.results, result],
-                countdown: isLast ? 0 : profileJob.currentDelay,
+                countdown: isLast ? 0 : profileJob.formData.delay, // <-- FIXED
               }
             };
           });
@@ -931,7 +968,7 @@ const MainApp = () => {
               [result.profileName]: {
                 ...profileJob,
                 results: [...profileJob.results, result],
-                countdown: isLast ? 0 : profileJob.currentDelay,
+                countdown: isLast ? 0 : profileJob.formData.delay, // <-- FIXED
               }
             };
           });
@@ -946,7 +983,7 @@ const MainApp = () => {
               [result.profileName]: {
                 ...profileJob,
                 results: [...profileJob.results, resultWithTime],
-                countdown: isLast ? 0 : profileJob.currentDelay,
+                countdown: isLast ? 0 : profileJob.formData.bulkDelay, // <-- FIXED
               }
             };
           });
@@ -961,7 +998,7 @@ const MainApp = () => {
               [result.profileName]: {
                 ...profileJob,
                 results: [...profileJob.results, resultWithTime], 
-                countdown: isLast ? 0 : profileJob.currentDelay,
+                countdown: isLast ? 0 : profileJob.formData.bulkDelay, // <-- FIXED
               }
             };
           });
@@ -976,7 +1013,7 @@ const MainApp = () => {
               [result.profileName]: {
                 ...profileJob,
                 results: [...profileJob.results, resultWithTime],
-                countdown: isLast ? 0 : profileJob.currentDelay,
+                countdown: isLast ? 0 : profileJob.formData.bulkDelay, // <-- FIXED
               }
             };
           });
@@ -991,7 +1028,7 @@ const MainApp = () => {
               [result.profileName]: {
                 ...profileJob,
                 results: newResults,
-                countdown: isLast ? 0 : profileJob.currentDelay, 
+                countdown: isLast ? 0 : profileJob.formData.delay, // <-- FIXED
               }
             };
           });
@@ -1007,7 +1044,7 @@ const MainApp = () => {
               [result.profileName]: {
                 ...profileJob,
                 results: newResults,
-                countdown: isLast ? 0 : profileJob.currentDelay, 
+                countdown: isLast ? 0 : profileJob.formData.delay, // <-- FIXED
               }
             };
           });
@@ -1021,7 +1058,7 @@ const MainApp = () => {
                     [result.profileName]: {
                         ...profileJob,
                         results: [...profileJob.results, { ...result, timestamp: new Date() }],
-                        countdown: isLast ? 0 : profileJob.currentDelay,
+                        countdown: isLast ? 0 : profileJob.formData.delay, // <-- FIXED
                     }
                 };
             });
@@ -1035,7 +1072,7 @@ const MainApp = () => {
                     [result.profileName]: {
                         ...profileJob,
                         results: [...profileJob.results, { ...result, timestamp: new Date() }],
-                        countdown: isLast ? 0 : profileJob.currentDelay,
+                        countdown: isLast ? 0 : profileJob.formData.delay, // <-- FIXED
                     }
                 };
             });
@@ -1096,7 +1133,9 @@ const MainApp = () => {
         socket.on('bulkError', (data) => handleJobCompletion(data, `Server Error for ${data.profileName}`, data.message, "destructive"));
 
         return () => {
-          socket.disconnect();
+            // Remove the wake-up listener when the app closes
+            document.removeEventListener("visibilitychange", handleWakeUp);
+            socket.disconnect();
         };
     }, [toast]);
     

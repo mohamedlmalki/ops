@@ -5,7 +5,7 @@ import {
     PeopleJobs, CreatorJobs, ProjectsJobs, WebinarJobs, ExpenseJobs 
 } from '@/App'; 
 
-// 1. Union of all Job State Types (Added ExpenseJobs)
+// 1. Union of all Job State Types
 type AnyJobState = 
     | Jobs[keyof Jobs] 
     | InvoiceJobs[keyof InvoiceJobs] 
@@ -36,14 +36,14 @@ export function useJobTimer<T extends AnyJobsState>(
         [key: string]: { 
             processing?: NodeJS.Timeout, 
             countdown?: NodeJS.Timeout,
-            lastTickProcessing?: number, // Timestamp of last processing tick
-            lastTickCountdown?: number   // Timestamp of last countdown tick
+            lastTickProcessing?: number, 
+            lastTickCountdown?: number   
         } 
     }>({});
 
-    // Create a dependency string to trigger updates when status changes
+    // 🐛 THE FIX: We added '-${job.countdown > 0}' so the effect wakes up when a delay starts!
     const jobStatuses = Object.values(jobsState as Record<string, AnyJobState>)
-        .map(job => `${job.isProcessing}-${job.isPaused}`)
+        .map(job => `${job.isProcessing}-${job.isPaused}-${job.countdown > 0}`)
         .join(',');
 
     useEffect(() => {
@@ -61,20 +61,15 @@ export function useJobTimer<T extends AnyJobsState>(
 
             // --- 1. PROCESSING TIMER (Total Time Elapsed) ---
             if (job.isProcessing && !job.isPaused && !isProcessingTimerRunning) {
-                // Initialize lastTick to NOW
                 timers[timerKey].lastTickProcessing = Date.now();
                 
                 timers[timerKey].processing = setInterval(() => {
                     const now = Date.now();
-                    // Use stored lastTick or fallback to now
                     const lastTick = timers[timerKey].lastTickProcessing || now;
                     const deltaMs = now - lastTick;
 
-                    // Only update if at least 1 second has passed
                     if (deltaMs >= 1000) {
                         const deltaSeconds = Math.floor(deltaMs / 1000);
-                        
-                        // Update lastTick, keeping the remainder to prevent drift
                         timers[timerKey].lastTickProcessing = now - (deltaMs % 1000);
 
                         setJobsState(prev => {
@@ -86,7 +81,6 @@ export function useJobTimer<T extends AnyJobsState>(
                                 ...prev,
                                 [profileName]: {
                                     ...currentJob,
-                                    // FIX: Add actual elapsed seconds (e.g. +60s), not just +1
                                     processingTime: (currentJob.processingTime || 0) + deltaSeconds
                                 }
                             };
