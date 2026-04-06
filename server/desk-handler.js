@@ -27,41 +27,70 @@ const interruptibleSleep = (ms, jobId) => {
     });
 };
 
-// 🚨 SMART FINDER: Guarantees it grabs the right profile even if names match!
 const getRealDeskProfile = (profiles, profileName) => {
     return profiles.find(p => p.profileName === profileName && p.desk && p.desk.cloudflareTrackingUrl)
         || profiles.find(p => p.profileName === profileName && p.desk && p.desk.defaultDepartmentId)
         || profiles.find(p => p.profileName === profileName);
 };
 
-function injectTracking(description, email, selectedProfileName, deskConfig, ticketId) {
-    if (!deskConfig || !deskConfig.cloudflareTrackingUrl || deskConfig.cloudflareTrackingUrl.trim() === '') {
+// 🧠 ULTRA-SIMPLE SCANNER: Appends params to workers.dev links + ignores images + adds Pixel
+async function injectSmartTracking(description, email, selectedProfileName, deskConfig, ticketId, enableTracking) {
+    console.log(`\n[dev:server] ------------------------------------------------`);
+    console.log(`[dev:server] 🔍 STARTING TRACKING INJECTOR FOR: ${email}`);
+    
+    if (!enableTracking) {
+        console.log(`[dev:server] ⚠️ Tracking Checkbox is OFF. Sending normal email.`);
+        console.log(`[dev:server] ------------------------------------------------\n`);
         return description;
     }
 
-    let finalDescription = description;
-    const baseUrl = deskConfig.cloudflareTrackingUrl.replace(/\/$/, '').trim();
-    const trackerDomain = baseUrl.replace(/^https?:\/\//, ''); 
+    let newText = description;
 
-    const urlRegex = /(https?:\/\/[^\s"'<>]+)/g;
-    
-    finalDescription = finalDescription.replace(urlRegex, (url) => {
-        if (url.includes(trackerDomain)) {
-            if (url.includes('email=')) return url; 
-            const sep = url.includes('?') ? '&' : '?';
-            return `${url}${sep}email=${encodeURIComponent(email)}&profile=${encodeURIComponent(selectedProfileName + '_Desk')}&ticketId=${ticketId}`;
+    // 1. Look for ANY URL ending in .workers.dev that you pasted in the email
+    const workerUrlRegex = /(https?:\/\/[^\s'\"<>]+workers\.dev[^\s'\"<>]*)/gi;
+    let rawMatches = description.match(workerUrlRegex) || [];
+    let uniqueLinks = [...new Set(rawMatches)];
+
+    console.log(`[dev:server] 🔗 Found ${uniqueLinks.length} Cloudflare Worker link(s) in the text.`);
+
+    // 2. Inject parameters into those links
+    for (let rawUrl of uniqueLinks) {
+        // Skip images and the tracking pixel
+        if (rawUrl.match(/\.(png|jpg|jpeg|gif|webp|svg)(?:[?#].*)?$/i) || rawUrl.includes('track.gif')) {
+            console.log(`[dev:server] ⏭️ Skipped (Image or Pixel URL: ${rawUrl})`);
+            continue;
         }
-        return url; 
-    });
+        
+        // If it doesn't already have an email parameter, add it!
+        if (!rawUrl.includes('?email=') && !rawUrl.includes('&email=')) {
+            const separator = rawUrl.includes('?') ? '&' : '?';
+            const finalTrackedLink = `${rawUrl}${separator}email=${encodeURIComponent(email)}&profile=${encodeURIComponent(selectedProfileName + '_Desk')}&ticketId=${encodeURIComponent(ticketId)}`;
+            
+            newText = newText.split(rawUrl).join(finalTrackedLink);
+            console.log(`[dev:server] 💉 Injected parameters into: ${rawUrl}`);
+        } else {
+            console.log(`[dev:server] ⏭️ Skipped (Parameters already exist on ${rawUrl})`);
+        }
+    }
 
-    const pixel = `<img src="${baseUrl}/track.gif?email=${encodeURIComponent(email)}&ticketId=${ticketId}&profile=${encodeURIComponent(selectedProfileName + '_Desk')}" width="1" height="1" alt="" style="display:none;" />`;
-    finalDescription += pixel;
+    // 3. Inject the invisible Open Pixel at the bottom
+    if (deskConfig && deskConfig.cloudflareTrackingUrl) {
+        const baseUrl = deskConfig.cloudflareTrackingUrl.replace(/\/$/, '').trim();
+        const pixel = `<img src="${baseUrl}/track.gif?email=${encodeURIComponent(email)}&ticketId=${ticketId}&profile=${encodeURIComponent(selectedProfileName + '_Desk')}" width="1" height="1" alt="" style="display:none;" />`;
+        newText += pixel;
+        console.log(`[dev:server] 🖼️ Injected invisible Open Pixel at the bottom.`);
+    } else {
+        console.log(`[dev:server] ❌ No Cloudflare Tracking URL found in Profile settings! Pixel NOT added.`);
+    }
 
-    return finalDescription;
+    console.log(`[dev:server] 🏁 INJECTOR COMPLETE.`);
+    console.log(`[dev:server] ------------------------------------------------\n`);
+    
+    return newText;
 }
 
 const handleSendSingleTicket = async (data) => {
-    const { email, subject, description, selectedProfileName, sendDirectReply } = data;
+    const { email, subject, description, selectedProfileName, sendDirectReply, enableTracking } = data;
     if (!email || !selectedProfileName) return { success: false, error: 'Missing email or profile.' };
     
     const profiles = readProfiles();
@@ -71,7 +100,7 @@ const handleSendSingleTicket = async (data) => {
         if (!activeProfile) return { success: false, error: 'Profile not found.' };
         const deskConfig = activeProfile.desk;
 
-        const finalDescription = injectTracking(description, email, selectedProfileName, deskConfig, 'Single');
+        const finalDescription = await injectSmartTracking(description, email, selectedProfileName, deskConfig, 'Single', enableTracking);
 
         const ticketData = { subject, description: finalDescription, departmentId: deskConfig.defaultDepartmentId, contact: { email }, channel: 'Email' };
 
@@ -104,7 +133,7 @@ const handleVerifyTicketEmail = async (data) => {
 };
 
 const handleSendTestTicket = async (socket, data) => {
-    const { email, subject, description, selectedProfileName, sendDirectReply, verifyEmail } = data;
+    const { email, subject, description, selectedProfileName, sendDirectReply, verifyEmail, enableTracking } = data;
     if (!email || !selectedProfileName) return socket.emit('testTicketResult', { success: false, error: 'Missing email or profile.' });
     
     const profiles = readProfiles();
@@ -114,7 +143,7 @@ const handleSendTestTicket = async (socket, data) => {
         if (!activeProfile) return socket.emit('testTicketResult', { success: false, error: 'Profile not found.' });
         const deskConfig = activeProfile.desk;
 
-        const finalDescription = injectTracking(description, email, selectedProfileName, deskConfig, 'Test');
+        const finalDescription = await injectSmartTracking(description, email, selectedProfileName, deskConfig, 'Test', enableTracking);
 
         const ticketData = { subject, description: finalDescription, departmentId: deskConfig.defaultDepartmentId, contact: { email }, channel: 'Email' };
 
@@ -143,7 +172,7 @@ const handleSendTestTicket = async (socket, data) => {
 };
 
 const handleStartBulkCreate = async (socket, data) => {
-    const { emails, subject, description, delay, selectedProfileName, sendDirectReply, verifyEmail, stopAfterFailures = 0, displayName } = data;
+    const { emails, subject, description, delay, selectedProfileName, sendDirectReply, verifyEmail, stopAfterFailures = 0, displayName, enableTracking } = data;
     
     const profiles = readProfiles();
     const activeProfile = getRealDeskProfile(profiles, selectedProfileName);
@@ -174,7 +203,7 @@ const handleStartBulkCreate = async (socket, data) => {
             const email = emails[i];
             if (!email.trim()) continue;
             
-            const finalDescription = injectTracking(description, email, selectedProfileName, deskConfig, 'Bulk');
+            const finalDescription = await injectSmartTracking(description, email, selectedProfileName, deskConfig, 'Bulk', enableTracking);
             
             const ticketData = { subject, description: finalDescription, departmentId: deskConfig.defaultDepartmentId, contact: { email }, channel: 'Email', resolution: displayName };
             
@@ -367,6 +396,7 @@ const handleClearEmailFailures = async (socket, data) => {
     }
 };
 
+// 🚨 FIX: Added departmentId to the API URLs
 const handleGetMailReplyAddressDetails = async (socket, data) => {
     try {
         const profiles = readProfiles();

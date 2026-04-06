@@ -6,57 +6,144 @@ const axios = require('axios');
 
 let activeJobs = {};
 
-// 🚨 SMART FINDER: Guarantees it grabs the right profile even if names match!
 const getRealProjectsProfile = (profiles, profileName) => {
     return profiles.find(p => p.profileName === profileName && p.projects && p.projects.cloudflareTrackingUrl)
         || profiles.find(p => p.profileName === profileName && p.projects && p.projects.portalId)
         || profiles.find(p => p.profileName === profileName);
 };
 
-// 🚨 FIXED: BANNED HTML FROM CUSTOM FIELDS 🚨
-function injectProjectsTracking(dataForThisTask, taskDescription, currentValue, selectedProfileName, projectsConfig, enableTracking) {
+function injectProjectsTracking(dataForThisTask, taskDescription, email, selectedProfileName, projectsConfig, enableTracking) {
     console.log(`\n========== [DEBUG: PROJECTS TRACKING] ==========`);
+    console.log(`[dev:server] 🔍 STARTING GPS TRACKING INJECTOR FOR: ${email}`);
 
-    if (!enableTracking || !projectsConfig || !projectsConfig.cloudflareTrackingUrl || projectsConfig.cloudflareTrackingUrl.trim() === '') {
-        console.log(`⏭️ SKIPPING: Tracking is turned off or URL is missing.`);
+    if (!enableTracking) {
+        console.log(`[dev:server] ⚠️ Tracking Checkbox is OFF. Sending normal task.`);
         console.log(`================================================\n`);
         return { updatedDataForThisTask: dataForThisTask, updatedTaskDescription: taskDescription };
     }
 
-    const baseUrl = projectsConfig.cloudflareTrackingUrl.replace(/\/$/, '').trim();
-    const trackerDomain = baseUrl.replace(/^https?:\/\//, ''); 
-    const urlRegex = /(https?:\/\/[^\s"'<>]+)/g;
-
-    const pixel = `<img src="${baseUrl}/track.gif?email=${encodeURIComponent(currentValue)}&ticketId=Projects&profile=${encodeURIComponent(selectedProfileName + '_Projects')}" width="1" height="1" alt="" style="display:none;" />`;
-
-    const replacer = (url) => {
-        if (url.includes(trackerDomain)) {
-            if (url.includes('email=')) return url; 
-            const sep = url.includes('?') ? '&' : '?';
-            const rewritten = `${url}${sep}email=${encodeURIComponent(currentValue)}&profile=${encodeURIComponent(selectedProfileName + '_Projects')}&ticketId=Projects`;
-            console.log(`   ✅ REWRITTEN LINK -> ${rewritten}`);
-            return rewritten;
-        }
-        return url;
-    };
-
-    // 1. Scan the Custom Fields (ONLY rewrite URLs, NEVER inject the HTML pixel here!)
     let updatedDataForThisTask = { ...dataForThisTask };
-    for (const key of Object.keys(updatedDataForThisTask)) {
-        if (typeof updatedDataForThisTask[key] === 'string' && updatedDataForThisTask[key].trim().length > 0) {
-            console.log(`🔍 Scanning Custom Field [${key}] for links...`);
-            updatedDataForThisTask[key] = updatedDataForThisTask[key].replace(urlRegex, replacer);
+    let updatedTaskDescription = typeof taskDescription === 'string' ? taskDescription : '';
+
+    // --- PREPARE THE EXACT DESK PIXEL ---
+    let pixelHtml = "";
+    let pixelInjected = false;
+    if (projectsConfig && projectsConfig.cloudflareTrackingUrl) {
+        const baseUrl = projectsConfig.cloudflareTrackingUrl.replace(/\/$/, '').trim();
+        // Exact pixel from Desk with display:none
+        pixelHtml = `<img src="${baseUrl}/track.gif?email=${encodeURIComponent(email)}&ticketId=Projects&profile=${encodeURIComponent(selectedProfileName + '_Projects')}" width="1" height="1" alt="" style="display:none;" />`;
+    }
+
+    // --- PART 1: PROCESS CUSTOM FIELDS USING "GPS MAPPING" ---
+    let customFieldKeys = Object.keys(updatedDataForThisTask).filter(k => typeof updatedDataForThisTask[k] === 'string');
+    customFieldKeys.sort((a, b) => a.localeCompare(b, undefined, {numeric: true, sensitivity: 'base'}));
+
+    let fieldBoundaries = [];
+    let currentOffset = 0;
+    let combinedString = "";
+
+    for (let key of customFieldKeys) {
+        let text = updatedDataForThisTask[key];
+        combinedString += text;
+        fieldBoundaries.push({
+            key: key,
+            start: currentOffset,
+            end: currentOffset + text.length
+        });
+        currentOffset += text.length;
+    }
+
+    let insertionsByField = {};
+    for (let key of customFieldKeys) insertionsByField[key] = [];
+
+    const urlRegex = /(https?:\/\/[^\s'\"<>]+|www\.[^\s'\"<>]+)/gi;
+    let match;
+    let foundCount = 0;
+
+    while ((match = urlRegex.exec(combinedString)) !== null) {
+        let rawUrl = match[0];
+        
+        if (rawUrl.match(/\.(png|jpg|jpeg|gif|webp|svg)(?:[?#].*)?$/i) || rawUrl.includes('track.gif')) continue;
+        if (!rawUrl.toLowerCase().includes('worker')) continue;
+        if (rawUrl.includes('?email=') || rawUrl.includes('&email=')) continue;
+
+        foundCount++;
+        const sep = rawUrl.includes('?') ? '&' : '?';
+        const paramsToInject = `${sep}email=${encodeURIComponent(email)}&profile=${encodeURIComponent(selectedProfileName + '_Projects')}&ticketId=Projects`;
+
+        let injectionAbsoluteIndex = match.index + rawUrl.length;
+
+        for (let boundary of fieldBoundaries) {
+            if (injectionAbsoluteIndex > boundary.start && injectionAbsoluteIndex <= boundary.end) {
+                let localIndex = injectionAbsoluteIndex - boundary.start;
+                insertionsByField[boundary.key].push({
+                    localIndex: localIndex,
+                    textToInsert: paramsToInject,
+                    rawUrl: rawUrl
+                });
+                break;
+            }
         }
     }
 
-    // 2. Scan the Task Description and safely inject the HTML pixel here (Safe Zone)
-    let updatedTaskDescription = typeof taskDescription === 'string' ? taskDescription : '';
-    updatedTaskDescription = updatedTaskDescription.replace(urlRegex, replacer);
-    updatedTaskDescription += pixel; // 🚨 Always put the HTML here, never in the Custom Fields!
-    
-    console.log(`   👁️ Injected invisible open pixel into Task Description (Safe Zone).`);
+    if (foundCount === 0) console.log(`[dev:server] ⚪ No valid Worker links found in Custom Fields.`);
+
+    for (let key of customFieldKeys) {
+        let insertions = insertionsByField[key];
+        if (insertions.length > 0) {
+            insertions.sort((a, b) => b.localIndex - a.localIndex);
+            let text = updatedDataForThisTask[key];
+            
+            for (let ins of insertions) {
+                console.log(`[dev:server] 💉 INJECTED parameters safely into [${key}] for URL: ${ins.rawUrl}`);
+                text = text.substring(0, ins.localIndex) + ins.textToInsert + text.substring(ins.localIndex);
+            }
+
+            // 🚨 THE FIX: Inject the Pixel into the Custom Field so your Deluge script emails it!
+            if (pixelHtml && !pixelInjected) {
+                if (text.length + pixelHtml.length <= 1000) { // Safety check for your 1K limit
+                    text += pixelHtml;
+                    pixelInjected = true;
+                    console.log(`[dev:server] 🖼️ Injected exact Desk Open Pixel into Custom Field [${key}]!`);
+                } else {
+                    console.log(`[dev:server] ⚠️ Could not put pixel in [${key}] (1000 char limit). Will try next field.`);
+                }
+            }
+
+            updatedDataForThisTask[key] = text;
+        }
+    }
+
+    // --- PART 2: PROCESS TASK DESCRIPTION ---
+    const descMatches = updatedTaskDescription.match(urlRegex) || [];
+    if (descMatches.length > 0) {
+        console.log(`[dev:server] 📝 Scanning Task Description... Found links.`);
+        updatedTaskDescription = updatedTaskDescription.replace(urlRegex, (rawUrl) => {
+            if (rawUrl.match(/\.(png|jpg|jpeg|gif|webp|svg)(?:[?#].*)?$/i) || rawUrl.includes('track.gif')) return rawUrl;
+            if (!rawUrl.toLowerCase().includes('worker')) return rawUrl;
+            if (rawUrl.includes('?email=') || rawUrl.includes('&email=')) return rawUrl;
+            
+            const sep = rawUrl.includes('?') ? '&' : '?';
+            const finalTrackedLink = `${rawUrl}${sep}email=${encodeURIComponent(email)}&profile=${encodeURIComponent(selectedProfileName + '_Projects')}&ticketId=Projects`;
+            console.log(`[dev:server] 💉 INJECTED into Task Description.`);
+            return finalTrackedLink;
+        });
+    } else {
+        console.log(`[dev:server] ⚪ No Worker links found in Task Description.`);
+    }
+
+
+    // --- PART 3: PIXEL FALLBACK (If custom fields were empty or too full) ---
+    if (pixelHtml && !pixelInjected) {
+        updatedTaskDescription += pixelHtml;
+        console.log(`[dev:server] 🖼️ Injected Open Pixel into Description (Fallback).`);
+    } else if (!pixelHtml) {
+        console.log(`[dev:server] ❌ No Cloudflare Tracking URL found. Pixel NOT added.`);
+    }
+
+    console.log(`[dev:server] 🏁 PROJECTS INJECTOR COMPLETE.`);
     console.log(`================================================\n`);
-    
+
     return { updatedDataForThisTask, updatedTaskDescription };
 }
 
@@ -321,7 +408,6 @@ const handleStartBulkCreateTasks = async (socket, data) => {
             let dataForThisTask = { ...bulkDefaultData }; 
             if (primaryField !== 'name') dataForThisTask[primaryField] = currentValue; 
             
-            // 🚨 Use Injector to process safely
             const trackingData = injectProjectsTracking(dataForThisTask, taskDescription, currentValue, selectedProfileName, realProfile.projects, enableTracking);
             
             dataForThisTask = trackingData.updatedDataForThisTask;

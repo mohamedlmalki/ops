@@ -12,7 +12,7 @@ import {
     Send, Eye, Mail, Clock, MessageSquare, Users, Pause, Play, Square, 
     Bot, Upload, RefreshCw, Trash2, MailWarning, CheckCircle2, 
     XCircle, ImagePlus, AlertTriangle, RotateCcw, Sparkles, Edit, 
-    BarChart3 // <-- NEW ICON
+    BarChart3
 } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/hooks/use-toast';
@@ -21,7 +21,7 @@ import { Profile, JobState } from '@/App';
 import { formatTime } from '@/lib/utils';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
-import { TrackingAnalytics } from './TrackingAnalytics'; // <-- NEW IMPORT
+import { TrackingAnalytics } from './TrackingAnalytics';
 
 export interface TicketFormData {
   emails: string;
@@ -84,9 +84,8 @@ export const TicketForm: React.FC<TicketFormProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
   const [isLoadingName, setIsLoadingName] = useState(false);
-  const [isAnalyticsOpen, setIsAnalyticsOpen] = useState(false); // <-- NEW STATE FOR ANALYTICS DRAWER
+  const [isAnalyticsOpen, setIsAnalyticsOpen] = useState(false); 
   
-  // Set default Auto-Pause to 4 if it's currently 0 or undefined
   useEffect(() => {
     if (!formData.stopAfterFailures && formData.stopAfterFailures !== 0) {
         onFormDataChange({ ...formData, stopAfterFailures: 4 });
@@ -125,12 +124,14 @@ export const TicketForm: React.FC<TicketFormProps> = ({
   };
 
   useEffect(() => { if (selectedProfile && socket) fetchDisplayName(); }, [selectedProfile, socket]);
+  
   useEffect(() => {
     if (!socket) return;
     const handleDetailsResult = (result: any) => {
         setIsLoadingName(false);
         if (result.success) {
-            const name = result.notConfigured ? 'N/A' : result.data?.data?.displayName || '';
+            // 🚨 FIX: Safely read the exact displayName whether it is wrapped in .data or not!
+            const name = result.notConfigured ? 'N/A' : (result.data?.displayName || result.data?.data?.displayName || '');
             onFormDataChange({ ...formData, displayName: name });
         } else {
             toast({ title: "Error Fetching Sender Name", description: result.error, variant: "destructive" });
@@ -150,7 +151,7 @@ export const TicketForm: React.FC<TicketFormProps> = ({
   const emailCount = useMemo(() => formData.emails.split('\n').filter(email => email.trim() !== '').length, [formData.emails]);
   const handleSubmit = (e: React.FormEvent) => { e.preventDefault(); onSubmit(); };
   
-  const handleInputChange = (field: keyof Omit<TicketFormData, 'sendDirectReply' | 'verifyEmail' | 'verifyDelugeLog'>, value: string | number) => { 
+  const handleInputChange = (field: keyof Omit<TicketFormData, 'sendDirectReply' | 'verifyEmail' | 'enableTracking'>, value: string | number) => { 
       onFormDataChange({ ...formData, [field]: value }); 
   };
   
@@ -193,7 +194,6 @@ export const TicketForm: React.FC<TicketFormProps> = ({
               </CardTitle>
             </div>
             <div className="flex items-center space-x-2">
-              {/* NEW LIVE ANALYTICS BUTTON */}
               <Button 
                 variant="outline" 
                 size="sm" 
@@ -219,7 +219,6 @@ export const TicketForm: React.FC<TicketFormProps> = ({
           <form onSubmit={handleSubmit} className="space-y-6">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               
-              {/* LEFT COLUMN */}
               <div className="space-y-4">
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
@@ -261,7 +260,6 @@ export const TicketForm: React.FC<TicketFormProps> = ({
                     disabled={isProcessing}
                   />
                   
-                  {/* TIMERS AND COUNTERS */}
                   {jobState && (jobState.isProcessing || jobState.results.length > 0) && (
                       <div className="pt-4 border-t border-dashed">
                           <div className="grid grid-cols-4 gap-4 text-center">
@@ -274,7 +272,6 @@ export const TicketForm: React.FC<TicketFormProps> = ({
                   )}
                 </div>
 
-                {/* GROUPED SETTINGS */}
                 <div className="pt-4 border-t border-border/50">
                     <div className="grid grid-cols-2 gap-4 mb-4">
                         <div className="space-y-2">
@@ -291,10 +288,10 @@ export const TicketForm: React.FC<TicketFormProps> = ({
                         </div>
                     </div>
 
-                    {/* MUTUALLY EXCLUSIVE CHECKBOXES */}
                     <div className="space-y-2">
                         <Label className="flex items-center space-x-2"><Bot className="h-4 w-4" /><span>Optional Email Actions</span></Label>
                         <div className="space-y-4 rounded-lg bg-muted/30 p-4 border border-border">
+                          
                           <div className="flex items-start space-x-3">
                               <Checkbox 
                                   id="sendDirectReply" 
@@ -307,6 +304,7 @@ export const TicketForm: React.FC<TicketFormProps> = ({
                                   <p className="text-xs text-muted-foreground">Disables automation. Sends description as email.</p>
                               </div>
                           </div>
+                          
                           <div className="flex items-start space-x-3">
                               <Checkbox 
                                   id="verifyEmail" 
@@ -319,8 +317,9 @@ export const TicketForm: React.FC<TicketFormProps> = ({
                                   <p className="text-xs text-muted-foreground">Slower. Checks if automation was triggered.</p>
                               </div>
                           </div>   
-                          {/* TRACKING CHECKBOX */}
+                          
                           <Separator className="my-2" />
+                          
                           <div className="flex items-start space-x-3">
                               <Checkbox 
                                   id="enableTracking" 
@@ -336,15 +335,13 @@ export const TicketForm: React.FC<TicketFormProps> = ({
                                   <p className="text-xs text-muted-foreground">Appends invisible 1x1 pixel to detect opens instantly.</p>
                               </div>
                           </div>
+
                         </div>
                     </div>
                 </div>
               </div>
 
-              {/* RIGHT COLUMN */}
               <div className="space-y-4">
-                
-                {/* SENDER NAMES */}
                 <div className="space-y-2">
                   <Label htmlFor="displayName" className="flex items-center space-x-2">
                       <Edit className="h-4 w-4" /><span>Sender Name (Native Zoho)</span>
@@ -366,13 +363,11 @@ export const TicketForm: React.FC<TicketFormProps> = ({
                   <p className="text-[10px] text-muted-foreground">This injects the name into the Resolution field for the custom Deluge script.</p>
                 </div>
 
-                {/* TICKET SUBJECT */}
                 <div className="space-y-2 mt-4">
                   <Label htmlFor="subject" className="flex items-center space-x-2"><MessageSquare className="h-4 w-4" /><span>Ticket Subject</span></Label>
                   <Input id="subject" placeholder="Enter ticket subject..." value={formData.subject} onChange={(e) => handleInputChange('subject', e.target.value)} className="h-12 bg-muted/30 border-border focus:bg-card transition-colors" required disabled={isProcessing} />
                 </div>
 
-                {/* TICKET DESCRIPTION */}
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <Label htmlFor="description" className="flex items-center space-x-2"><MessageSquare className="h-4 w-4" /><span>Ticket Description</span></Label>
@@ -426,12 +421,11 @@ export const TicketForm: React.FC<TicketFormProps> = ({
         </CardContent>
       </Card>
 
-      {/* THE NEW ANALYTICS DRAWER */}
       <TrackingAnalytics 
         isOpen={isAnalyticsOpen} 
         onClose={() => setIsAnalyticsOpen(false)} 
         trackingUrl={selectedProfile?.desk?.cloudflareTrackingUrl || ''} 
-        profileName={selectedProfile?.profileName || 'Unknown'} // <-- ADD THIS LINE!
+        profileName={selectedProfile?.profileName || 'Unknown'}
       />
     </>
   );
