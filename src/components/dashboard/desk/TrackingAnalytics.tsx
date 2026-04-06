@@ -38,6 +38,13 @@ export const TrackingAnalytics: React.FC<TrackingAnalyticsProps> = ({ isOpen, on
     const [logs, setLogs] = useState<LogEntry[]>([]);
     const [isLoading, setIsLoading] = useState(false);
     const [isClearing, setIsClearing] = useState(false);
+    
+    const [activeApp, setActiveApp] = useState<'Desk' | 'Projects'>('Desk');
+    
+    // 🚨 ADDED: State for Table Sorting
+    const [sortBy, setSortBy] = useState<'time' | 'opens' | 'clicks' | 'email'>('time');
+    const [sortDesc, setSortDesc] = useState(true);
+
     const [date, setDate] = useState<DateRange | undefined>({
         from: undefined,
         to: undefined,
@@ -53,8 +60,6 @@ export const TrackingAnalytics: React.FC<TrackingAnalyticsProps> = ({ isOpen, on
         if (!url) return;
         setIsLoading(true);
         try {
-            // 🚨 THE FIX: Removed custom headers to bypass browser CORS blocking!
-            // The ?t= timestamp forces the browser to get the freshest data.
             const res = await fetch(`${url}?t=${new Date().getTime()}`);
             const data = await res.json();
             
@@ -64,11 +69,9 @@ export const TrackingAnalytics: React.FC<TrackingAnalyticsProps> = ({ isOpen, on
                 );
                 setLogs(sorted);
             } else {
-                console.error("Cloudflare Error:", data.error);
                 toast({ title: "Error", description: data.error || "Failed to load logs.", variant: "destructive" });
             }
         } catch (error) {
-            console.error("Failed to fetch tracking logs", error);
             toast({ title: "Fetch Failed", description: "Could not reach Cloudflare.", variant: "destructive" });
         } finally {
             setIsLoading(false);
@@ -79,7 +82,7 @@ export const TrackingAnalytics: React.FC<TrackingAnalyticsProps> = ({ isOpen, on
         const url = getApiUrl();
         if (!url) return;
         
-        if (!window.confirm("WARNING: This will permanently delete ALL tracking logs from your Cloudflare database. Continue?")) return;
+        if (!window.confirm(`WARNING: This will permanently delete ALL tracking logs for both Desk and Projects from your Cloudflare database. Continue?`)) return;
 
         setIsClearing(true);
         try {
@@ -107,10 +110,20 @@ export const TrackingAnalytics: React.FC<TrackingAnalyticsProps> = ({ isOpen, on
     }, [isOpen, trackingUrl]);
 
     const filteredLogs = useMemo(() => {
+        const targetProfile = String(profileName + '_' + activeApp).toLowerCase();
+        const legacyProfile = String(profileName).toLowerCase();
+
         let filtered = logs.filter(log => {
             const logProfile = String(log.profileName || log.profile || '').toLowerCase();
-            const currentProfile = String(profileName || '').toLowerCase();
-            return logProfile === currentProfile;
+            
+            if (logProfile === targetProfile) return true; 
+            
+            if (logProfile === legacyProfile) {
+                if (activeApp === 'Projects') return log.ticketId === 'Projects';
+                if (activeApp === 'Desk') return log.ticketId !== 'Projects';
+            }
+            
+            return false;
         });
 
         if (date?.from) {
@@ -123,11 +136,66 @@ export const TrackingAnalytics: React.FC<TrackingAnalyticsProps> = ({ isOpen, on
             });
         }
         return filtered;
-    }, [logs, date, profileName]);
+    }, [logs, date, profileName, activeApp]);
+
+    const userStats = useMemo(() => {
+        const stats: Record<string, { opens: number, clicks: number }> = {};
+        filteredLogs.forEach(log => {
+            if (!stats[log.email]) {
+                stats[log.email] = { opens: 0, clicks: 0 };
+            }
+            stats[log.email].opens += 1;
+            stats[log.email].clicks += (log.clickCount || 0);
+        });
+        return stats;
+    }, [filteredLogs]);
+
+    const uniqueFilteredLogs = useMemo(() => {
+        const seen = new Set<string>();
+        return filteredLogs.filter(log => {
+            if (seen.has(log.email)) return false;
+            seen.add(log.email);
+            return true;
+        });
+    }, [filteredLogs]);
+
+    // 🚨 ADDED: Sorting Function for the Data Table
+    const handleSort = (column: 'time' | 'opens' | 'clicks' | 'email') => {
+        if (sortBy === column) {
+            setSortDesc(!sortDesc);
+        } else {
+            setSortBy(column);
+            setSortDesc(true); // Default to Descending (highest number first) when clicking a new column
+        }
+    };
+
+    const sortedUniqueLogs = useMemo(() => {
+        return [...uniqueFilteredLogs].sort((a, b) => {
+            let valA: any, valB: any;
+            if (sortBy === 'time') {
+                valA = new Date(a.openedAt).getTime();
+                valB = new Date(b.openedAt).getTime();
+            } else if (sortBy === 'opens') {
+                valA = userStats[a.email]?.opens || 0;
+                valB = userStats[b.email]?.opens || 0;
+            } else if (sortBy === 'clicks') {
+                valA = userStats[a.email]?.clicks || 0;
+                valB = userStats[b.email]?.clicks || 0;
+            } else if (sortBy === 'email') {
+                valA = a.email.toLowerCase();
+                valB = b.email.toLowerCase();
+            }
+            
+            if (valA < valB) return sortDesc ? 1 : -1;
+            if (valA > valB) return sortDesc ? -1 : 1;
+            return 0;
+        });
+    }, [uniqueFilteredLogs, userStats, sortBy, sortDesc]);
+
 
     // --- DATA PROCESSING FOR CHARTS ---
     const uniqueViewers = new Set(filteredLogs.map(log => log.email)).size;
-    const clickersCount = filteredLogs.filter(log => log.hasClicked).length;
+    const clickersCount = new Set(filteredLogs.filter(log => log.hasClicked).map(log => log.email)).size; 
     
     const timelineDataMap: Record<string, number> = {};
     filteredLogs.forEach(log => {
@@ -141,13 +209,13 @@ export const TrackingAnalytics: React.FC<TrackingAnalyticsProps> = ({ isOpen, on
         const c = log.country || 'Unknown';
         countryMap[c] = (countryMap[c] || 0) + 1;
     });
-    const pieData = Object.keys(countryMap).map(c => ({ name: c, value: countryMap[c] }));
-    const COLORS = ['#3b82f6', '#10b981', '#8b5cf6', '#f59e0b', '#ef4444', '#64748b'];
+    const pieData = Object.keys(countryMap).map(c => ({ name: c, value: countryMap[c] })).sort((a, b) => b.value - a.value);
+    const COLORS = ['#3b82f6', '#10b981', '#8b5cf6', '#f59e0b', '#ef4444', '#64748b', '#0ea5e9', '#84cc16', '#a855f7', '#d946ef'];
 
     return (
         <Sheet open={isOpen} onOpenChange={onClose}>
             <SheetContent className="w-[400px] sm:w-[600px] sm:max-w-none overflow-y-auto bg-slate-50/50 dark:bg-slate-950">
-                <SheetHeader className="mb-6">
+                <SheetHeader className="mb-4">
                     <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
                         <div>
                             <SheetTitle className="flex items-center text-2xl">
@@ -183,16 +251,36 @@ export const TrackingAnalytics: React.FC<TrackingAnalyticsProps> = ({ isOpen, on
                             </Button>
                         </div>
                     </div>
+                    
+                    <div className="flex bg-slate-200/50 dark:bg-slate-800/50 p-1 rounded-lg w-fit mt-2 border border-slate-200 dark:border-slate-700 shadow-sm">
+                        <button 
+                            onClick={() => setActiveApp('Desk')} 
+                            className={cn("px-5 py-1.5 text-sm font-semibold rounded-md transition-all duration-200", 
+                                activeApp === 'Desk' ? "bg-white dark:bg-slate-900 shadow-sm text-blue-600 dark:text-blue-400" : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+                            )}
+                        >
+                            Desk Stats
+                        </button>
+                        <button 
+                            onClick={() => setActiveApp('Projects')} 
+                            className={cn("px-5 py-1.5 text-sm font-semibold rounded-md transition-all duration-200", 
+                                activeApp === 'Projects' ? "bg-white dark:bg-slate-900 shadow-sm text-blue-600 dark:text-blue-400" : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+                            )}
+                        >
+                            Projects Stats
+                        </button>
+                    </div>
+
                 </SheetHeader>
 
                 {!trackingUrl ? (
-                    <div className="flex flex-col items-center justify-center h-64 text-center text-muted-foreground bg-card rounded-lg border border-dashed">
+                    <div className="flex flex-col items-center justify-center h-64 text-center text-muted-foreground bg-card rounded-lg border border-dashed mt-6">
                         <Globe className="h-12 w-12 mb-4 opacity-20" />
                         <p>No Tracking URL configured.</p>
                         <p className="text-xs mt-1">Add your Cloudflare Worker URL in your Profile Settings.</p>
                     </div>
                 ) : (
-                    <div className="space-y-6">
+                    <div className="space-y-6 mt-4">
                         <div className="grid grid-cols-3 gap-4">
                             <Card className="shadow-sm">
                                 <CardContent className="p-4 flex flex-col items-center justify-center text-center">
@@ -255,60 +343,95 @@ export const TrackingAnalytics: React.FC<TrackingAnalyticsProps> = ({ isOpen, on
                                             <Tooltip contentStyle={{ fontSize: '12px', borderRadius: '8px' }} />
                                         </PieChart>
                                     </ResponsiveContainer>
-                                    <div className="w-[50%] pl-4 space-y-2">
-                                        {pieData.map((entry, index) => (
-                                            <div key={entry.name} className="flex items-center justify-between text-xs">
-                                                <div className="flex items-center">
-                                                    <div className="w-2 h-2 rounded-full mr-2" style={{ backgroundColor: COLORS[index % COLORS.length] }} />
-                                                    <span className="font-medium">{entry.name}</span>
+                                    <ScrollArea className="w-[50%] h-[160px]">
+                                        <div className="pl-2 pr-4 space-y-2">
+                                            {pieData.map((entry, index) => (
+                                                <div key={entry.name} className="flex items-center justify-between text-xs">
+                                                    <div className="flex items-center min-w-0">
+                                                        <div className="w-2 h-2 rounded-full mr-2 shrink-0" style={{ backgroundColor: COLORS[index % COLORS.length] }} />
+                                                        <span className="font-medium truncate" title={entry.name}>{entry.name}</span>
+                                                    </div>
+                                                    <span className="text-muted-foreground ml-2 shrink-0">{entry.value}</span>
                                                 </div>
-                                                <span className="text-muted-foreground">{entry.value}</span>
-                                            </div>
-                                        ))}
-                                    </div>
+                                            ))}
+                                        </div>
+                                    </ScrollArea>
                                 </CardContent>
                             </Card>
                         )}
 
-                        <Card className="shadow-sm">
-                            <CardHeader className="pb-2 border-b">
+                        {/* 🚨 THE NEW SORTABLE DATA TABLE */}
+                        <Card className="shadow-sm overflow-hidden">
+                            <CardHeader className="pb-2 border-b bg-muted/20">
                                 <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Recent Activity</CardTitle>
                             </CardHeader>
                             <CardContent className="p-0">
-                                <ScrollArea className="h-[300px]">
-                                    {filteredLogs.length === 0 ? (
-                                        <div className="p-4 text-center text-sm text-muted-foreground">No tracking logs found for this account.</div>
-                                    ) : (
-                                        <div className="divide-y">
-                                            {filteredLogs.map((log, i) => (
-                                                <div key={i} className="p-4 flex items-center justify-between hover:bg-muted/50 transition-colors">
-                                                    <div className="flex items-center space-x-3">
-                                                        <div className="bg-blue-100 dark:bg-blue-900/30 p-2 rounded-full">
-                                                            <Mail className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-                                                        </div>
-                                                        <div>
-                                                            <div className="flex items-center space-x-2">
-                                                                <p className="text-sm font-medium">{log.email}</p>
-                                                                {log.hasClicked && (
-                                                                    <span className="bg-blue-100 text-blue-700 border border-blue-200 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center shadow-sm">
-                                                                        🖱️ Clicked {log.clickCount || 1}
-                                                                    </span>
-                                                                )}
+                                <ScrollArea className="h-[350px] w-full">
+                                    <table className="w-full text-sm text-left">
+                                        <thead className="text-[11px] text-muted-foreground bg-muted/50 sticky top-0 z-10 shadow-sm uppercase tracking-wider">
+                                            <tr>
+                                                <th className="px-4 py-3 font-semibold cursor-pointer hover:bg-muted/80 select-none transition-colors" onClick={() => handleSort('email')}>
+                                                    User / Details {sortBy === 'email' ? (sortDesc ? '↓' : '↑') : <span className="opacity-30">↕</span>}
+                                                </th>
+                                                <th className="px-4 py-3 font-semibold cursor-pointer hover:bg-muted/80 text-center select-none transition-colors" onClick={() => handleSort('opens')}>
+                                                    Opens {sortBy === 'opens' ? (sortDesc ? '↓' : '↑') : <span className="opacity-30">↕</span>}
+                                                </th>
+                                                <th className="px-4 py-3 font-semibold cursor-pointer hover:bg-muted/80 text-center select-none transition-colors" onClick={() => handleSort('clicks')}>
+                                                    Clicks {sortBy === 'clicks' ? (sortDesc ? '↓' : '↑') : <span className="opacity-30">↕</span>}
+                                                </th>
+                                                <th className="px-4 py-3 font-semibold cursor-pointer hover:bg-muted/80 text-right select-none transition-colors" onClick={() => handleSort('time')}>
+                                                    Last Active {sortBy === 'time' ? (sortDesc ? '↓' : '↑') : <span className="opacity-30">↕</span>}
+                                                </th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-border">
+                                            {sortedUniqueLogs.length === 0 ? (
+                                                <tr>
+                                                    <td colSpan={4} className="p-8 text-center text-sm text-muted-foreground">
+                                                        No tracking logs found for this account.
+                                                    </td>
+                                                </tr>
+                                            ) : (
+                                                sortedUniqueLogs.map((log, i) => (
+                                                    <tr key={i} className="hover:bg-muted/50 transition-colors group">
+                                                        <td className="px-4 py-3">
+                                                            <div className="flex items-center space-x-3">
+                                                                <div className="bg-slate-100 dark:bg-slate-800 p-2 rounded-full hidden sm:block shrink-0 group-hover:bg-blue-100 dark:group-hover:bg-blue-900/30 transition-colors">
+                                                                    <Mail className="h-4 w-4 text-slate-600 dark:text-slate-400 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors" />
+                                                                </div>
+                                                                <div className="min-w-0">
+                                                                    <p className="font-medium text-sm truncate max-w-[150px] sm:max-w-[220px]" title={log.email}>{log.email}</p>
+                                                                    <div className="flex items-center text-[10px] text-muted-foreground mt-1 space-x-2">
+                                                                        <span className="bg-muted px-1.5 py-0.5 rounded font-bold text-slate-700 dark:text-slate-300">{log.ticketId || 'Bulk'}</span>
+                                                                        {log.country && <span className="truncate max-w-[80px]" title={log.country}>📍 {log.country}</span>}
+                                                                        {log.clickCountry && log.clickCountry !== log.country && <span className="truncate max-w-[80px] text-blue-500" title={log.clickCountry}>🖱️ {log.clickCountry}</span>}
+                                                                    </div>
+                                                                </div>
                                                             </div>
-                                                            <div className="flex items-center text-[10px] text-muted-foreground mt-0.5 space-x-2">
-                                                                <span className="bg-muted px-1.5 py-0.5 rounded font-bold text-slate-700">{log.ticketId || 'Bulk'}</span>
-                                                                {log.country && <span>👁️ Open: {log.country}</span>}
-                                                                {log.clickCountry && <span>🖱️ Click: {log.clickCountry}</span>}
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                    <div className="text-xs text-right text-muted-foreground">
-                                                        {format(parseISO(log.openedAt), 'MMM d, h:mm a')}
-                                                    </div>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    )}
+                                                        </td>
+                                                        <td className="px-4 py-3 text-center align-middle">
+                                                            <span className="bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 text-xs font-bold px-2.5 py-0.5 rounded-full inline-flex items-center justify-center shadow-sm min-w-[2rem]">
+                                                                {userStats[log.email]?.opens || 1}
+                                                            </span>
+                                                        </td>
+                                                        <td className="px-4 py-3 text-center align-middle">
+                                                            {(userStats[log.email]?.clicks || 0) > 0 ? (
+                                                                <span className="bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 border border-blue-200 dark:border-blue-800 text-xs font-bold px-2.5 py-0.5 rounded-full inline-flex items-center justify-center shadow-sm min-w-[2rem]">
+                                                                    {userStats[log.email].clicks}
+                                                                </span>
+                                                            ) : (
+                                                                <span className="text-muted-foreground text-xs opacity-40 font-bold">-</span>
+                                                            )}
+                                                        </td>
+                                                        <td className="px-4 py-3 text-right whitespace-nowrap align-middle">
+                                                            <span className="block text-sm font-medium text-slate-700 dark:text-slate-300">{format(parseISO(log.openedAt), 'MMM d')}</span>
+                                                            <span className="block text-[10px] text-muted-foreground mt-0.5">{format(parseISO(log.openedAt), 'h:mm a')}</span>
+                                                        </td>
+                                                    </tr>
+                                                ))
+                                            )}
+                                        </tbody>
+                                    </table>21
                                 </ScrollArea>
                             </CardContent>
                         </Card>

@@ -1,10 +1,64 @@
-// --- FILE: apps/ops/server/projects-handler.js ---
+// --- FILE: server/projects-handler.js ---
 
 const { getValidAccessToken, makeApiCall, parseError, createJobId, readProfiles } = require('./utils');
 const { delay } = require('./utils'); 
 const axios = require('axios'); 
 
 let activeJobs = {};
+
+// 🚨 SMART FINDER: Guarantees it grabs the right profile even if names match!
+const getRealProjectsProfile = (profiles, profileName) => {
+    return profiles.find(p => p.profileName === profileName && p.projects && p.projects.cloudflareTrackingUrl)
+        || profiles.find(p => p.profileName === profileName && p.projects && p.projects.portalId)
+        || profiles.find(p => p.profileName === profileName);
+};
+
+// 🚨 FIXED: BANNED HTML FROM CUSTOM FIELDS 🚨
+function injectProjectsTracking(dataForThisTask, taskDescription, currentValue, selectedProfileName, projectsConfig, enableTracking) {
+    console.log(`\n========== [DEBUG: PROJECTS TRACKING] ==========`);
+
+    if (!enableTracking || !projectsConfig || !projectsConfig.cloudflareTrackingUrl || projectsConfig.cloudflareTrackingUrl.trim() === '') {
+        console.log(`⏭️ SKIPPING: Tracking is turned off or URL is missing.`);
+        console.log(`================================================\n`);
+        return { updatedDataForThisTask: dataForThisTask, updatedTaskDescription: taskDescription };
+    }
+
+    const baseUrl = projectsConfig.cloudflareTrackingUrl.replace(/\/$/, '').trim();
+    const trackerDomain = baseUrl.replace(/^https?:\/\//, ''); 
+    const urlRegex = /(https?:\/\/[^\s"'<>]+)/g;
+
+    const pixel = `<img src="${baseUrl}/track.gif?email=${encodeURIComponent(currentValue)}&ticketId=Projects&profile=${encodeURIComponent(selectedProfileName + '_Projects')}" width="1" height="1" alt="" style="display:none;" />`;
+
+    const replacer = (url) => {
+        if (url.includes(trackerDomain)) {
+            if (url.includes('email=')) return url; 
+            const sep = url.includes('?') ? '&' : '?';
+            const rewritten = `${url}${sep}email=${encodeURIComponent(currentValue)}&profile=${encodeURIComponent(selectedProfileName + '_Projects')}&ticketId=Projects`;
+            console.log(`   ✅ REWRITTEN LINK -> ${rewritten}`);
+            return rewritten;
+        }
+        return url;
+    };
+
+    // 1. Scan the Custom Fields (ONLY rewrite URLs, NEVER inject the HTML pixel here!)
+    let updatedDataForThisTask = { ...dataForThisTask };
+    for (const key of Object.keys(updatedDataForThisTask)) {
+        if (typeof updatedDataForThisTask[key] === 'string' && updatedDataForThisTask[key].trim().length > 0) {
+            console.log(`🔍 Scanning Custom Field [${key}] for links...`);
+            updatedDataForThisTask[key] = updatedDataForThisTask[key].replace(urlRegex, replacer);
+        }
+    }
+
+    // 2. Scan the Task Description and safely inject the HTML pixel here (Safe Zone)
+    let updatedTaskDescription = typeof taskDescription === 'string' ? taskDescription : '';
+    updatedTaskDescription = updatedTaskDescription.replace(urlRegex, replacer);
+    updatedTaskDescription += pixel; // 🚨 Always put the HTML here, never in the Custom Fields!
+    
+    console.log(`   👁️ Injected invisible open pixel into Task Description (Safe Zone).`);
+    console.log(`================================================\n`);
+    
+    return { updatedDataForThisTask, updatedTaskDescription };
+}
 
 async function getApiNameMap(portalId, projectId, activeProfile) {
     try {
@@ -140,7 +194,7 @@ const handleGetTasks = async (socket, data) => {
         let basePath = `/api/v3/portal/${portalId}/tasks`;
         if (projectId) basePath = `/api/v3/portal/${portalId}/projects/${projectId}/tasks`;
 
-        socket.emit('projectsTasksLog', { type: 'info', message: `🚀 Fetching up to ${targetLimit} tasks (Using API V3 Pagination)...` });
+        socket.emit('projectsTasksLog', { type: 'info', message: `🚀 Fetching up to ${targetLimit} tasks...` });
 
         const statusesToFetch = ['open', 'closed'];
 
@@ -150,13 +204,9 @@ const handleGetTasks = async (socket, data) => {
             let page = 1; 
             let hasMore = true;
 
-            socket.emit('projectsTasksLog', { type: 'info', message: `📥 Scanning '${currentStatus.toUpperCase()}' tasks...` });
-
             while (allTasks.length < targetLimit && hasMore) {
                 const per_page = 100; 
                 const fetchUrl = `https://projectsapi.zoho.com${basePath}`;
-
-                socket.emit('projectsTasksLog', { type: 'request', message: `GET [${currentStatus}] (Page: ${page}, Limit: ${per_page})` });
 
                 try {
                     const response = await axios.get(fetchUrl, {
@@ -168,12 +218,7 @@ const handleGetTasks = async (socket, data) => {
                     const tasks = response.data.tasks || [];
                     const newTasks = tasks.filter(t => !allTasks.some(existing => (existing.id_string || String(existing.id)) === (t.id_string || String(t.id))));
                     
-                    socket.emit('projectsTasksLog', { type: 'response', message: `✅ Page ${page} returned ${tasks.length} tasks (${newTasks.length} unique).` });
-
-                    if (tasks.length === 0) {
-                        hasMore = false; 
-                    } else if (newTasks.length === 0 && tasks.length > 0) {
-                        socket.emit('projectsTasksLog', { type: 'error', message: `⚠️ Page ${page} contained 100% duplicates. Escaping loop.` });
+                    if (tasks.length === 0 || (newTasks.length === 0 && tasks.length > 0)) {
                         hasMore = false; 
                     } else {
                         allTasks = allTasks.concat(newTasks);
@@ -187,11 +232,6 @@ const handleGetTasks = async (socket, data) => {
                     }
 
                 } catch (apiError) {
-                    if (apiError.code === 'ECONNABORTED' || apiError.message.includes('timeout')) {
-                        socket.emit('projectsTasksLog', { type: 'error', message: `❌ Network Timeout on Page ${page}.` });
-                        hasMore = false;
-                        break;
-                    }
                     if (apiError.response && (apiError.response.status === 400 || apiError.response.status === 404)) {
                         hasMore = false;
                         break;
@@ -202,23 +242,20 @@ const handleGetTasks = async (socket, data) => {
             }
         }
         
-        if (allTasks.length > targetLimit) {
-            allTasks = allTasks.slice(0, targetLimit);
-        }
-
-        socket.emit('projectsTasksLog', { type: 'success', message: `🎉 Finished! Compiled ${allTasks.length} total unique tasks.` });
+        if (allTasks.length > targetLimit) allTasks = allTasks.slice(0, targetLimit);
         socket.emit('projectsTasksResult', { success: true, data: allTasks, pageInfo: { total_fetched: allTasks.length } });
 
     } catch (error) {
-        socket.emit('projectsTasksLog', { type: 'error', message: `❌ Server Error: ${error.message}` });
         socket.emit('projectsTasksResult', { success: false, error: error.message, data: [] });
     }
 };
 
 const handleCreateSingleTask = async (data, providedMap = null) => {
     const { portalId, projectId, tasklistId, selectedProfileName } = data; 
+    
     const profiles = readProfiles();
-    const activeProfile = profiles.find(p => p.profileName === selectedProfileName);
+    const activeProfile = getRealProjectsProfile(profiles, selectedProfileName);
+    
     if (!activeProfile || !portalId || !projectId || !tasklistId) return { success: false, error: 'Missing parameters.' };
 
     try {
@@ -244,9 +281,12 @@ const handleCreateSingleTask = async (data, providedMap = null) => {
 };
 
 const handleStartBulkCreateTasks = async (socket, data) => {
-    const { formData, selectedProfileName, activeProfile } = data;
-    const { taskName, primaryField, primaryValues, projectId, taskDescription, tasklistId, delay, bulkDefaultData, stopAfterFailures = 4, enableTracking } = formData; // 🚨 PULLED enableTracking
+    const { formData, selectedProfileName } = data;
+    const { taskName, primaryField, primaryValues, projectId, taskDescription, tasklistId, delay, bulkDefaultData, stopAfterFailures = 4, enableTracking } = formData; 
     
+    const profiles = readProfiles();
+    const realProfile = getRealProjectsProfile(profiles, selectedProfileName);
+
     const jobId = createJobId(socket.id, selectedProfileName, 'projects');
     activeJobs[jobId] = { status: 'running', consecutiveFailures: 0, stopAfterFailures: Number(stopAfterFailures) };
     
@@ -257,8 +297,10 @@ const handleStartBulkCreateTasks = async (socket, data) => {
     jobState.totalToProcess = tasksToProcess.length;
 
     try {
-        const portalId = activeProfile.projects.portalId;
-        const sharedApiNameMap = await getApiNameMap(portalId, projectId, activeProfile);
+        if (!realProfile || !realProfile.projects) throw new Error("Projects profile not found.");
+        
+        const portalId = realProfile.projects.portalId;
+        const sharedApiNameMap = await getApiNameMap(portalId, projectId, realProfile);
 
         for (let i = 0; i < tasksToProcess.length; i++) {
             if (!activeJobs[jobId] || activeJobs[jobId].status === 'ended') break;
@@ -276,56 +318,18 @@ const handleStartBulkCreateTasks = async (socket, data) => {
             if (!activeJobs[jobId] || activeJobs[jobId].status === 'ended') break;
 
             const currentValue = tasksToProcess[i];
-            const dataForThisTask = { ...bulkDefaultData }; 
+            let dataForThisTask = { ...bulkDefaultData }; 
             if (primaryField !== 'name') dataForThisTask[primaryField] = currentValue; 
             
-            // ==========================================
-            // 👁️ THE SMART SCANNER: INJECT STEALTH TRACKING
-            // ==========================================
-            const trackingUrl = activeProfile.projects?.cloudflareTrackingUrl;
+            // 🚨 Use Injector to process safely
+            const trackingData = injectProjectsTracking(dataForThisTask, taskDescription, currentValue, selectedProfileName, realProfile.projects, enableTracking);
             
-            // 🚨 ONLY INJECT IF THE USER ENABLED IT AND A URL EXISTS
-            if (enableTracking && trackingUrl) {
-                const baseUrl = trackingUrl.replace(/\/$/, '');
-                const safeBaseUrl = baseUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // Escape for Regex
-                let targetPixelKey = null;
-                let maxTextLength = -1;
-
-                // Step A: Scan every chunk for Links
-                for (const key of Object.keys(dataForThisTask)) {
-                    if (typeof dataForThisTask[key] === 'string' && dataForThisTask[key].trim().length > 0) {
-                        
-                        // 🚨 ULTIMATE SMART SCANNER: Catches Plain Text AND HTML Links!
-                        const universalLinkRegex = new RegExp(`(${safeBaseUrl}[^\\s"'<>]*)`, 'g');
-                        
-                        dataForThisTask[key] = dataForThisTask[key].replace(universalLinkRegex, (match) => {
-                            if (match.includes('email=')) return match; // Prevent double-adding
-                            const separator = match.includes('?') ? '&' : '?';
-                            return `${match}${separator}email=${encodeURIComponent(currentValue)}&profile=${encodeURIComponent(selectedProfileName)}&ticketId=Projects`;
-                        });
-                        
-                        // Find the longest text field for the open pixel
-                        const val = dataForThisTask[key].trim();
-                        const isLikelyEmail = val.includes('@') && !val.includes(' ');
-                        
-                        if (!isLikelyEmail && val.length > maxTextLength) {
-                            maxTextLength = val.length;
-                            targetPixelKey = key;
-                        }
-                    }
-                }
-
-                // Step B: Inject the Open Pixel 
-                if (targetPixelKey) {
-                    const pixel = `<img src="${baseUrl}/track.gif?email=${encodeURIComponent(currentValue)}&ticketId=Projects&profile=${encodeURIComponent(selectedProfileName)}" width="1" height="1" alt="" style="display:none;" />`;
-                    dataForThisTask[targetPixelKey] += pixel;
-                }
-            }
-            // ==========================================
+            dataForThisTask = trackingData.updatedDataForThisTask;
+            const finalTaskDescription = trackingData.updatedTaskDescription;
 
             const result = await handleCreateSingleTask({
                 portalId, projectId, taskName: primaryField === 'name' ? currentValue : `${taskName}_${i + 1}`, 
-                taskDescription, tasklistId, selectedProfileName, bulkDefaultData: dataForThisTask 
+                taskDescription: finalTaskDescription, tasklistId, selectedProfileName, bulkDefaultData: dataForThisTask 
             }, sharedApiNameMap);
             
             if (result.success) {
@@ -348,7 +352,10 @@ const handleStartBulkCreateTasks = async (socket, data) => {
 };
 
 const handleStartBulkDeleteTasks = async (socket, data) => {
-    const { activeProfile, selectedProfileName, portalId, projectId, taskIds, deleteAll } = data;
+    const { activeProfile: frontendProfile, selectedProfileName, portalId, projectId, taskIds, deleteAll } = data;
+    const profiles = readProfiles();
+    const activeProfile = getRealProjectsProfile(profiles, selectedProfileName) || frontendProfile;
+
     const jobId = createJobId(socket.id, selectedProfileName, 'projects_delete');
     activeJobs[jobId] = { status: 'running', type: 'delete' };
 
@@ -357,17 +364,13 @@ const handleStartBulkDeleteTasks = async (socket, data) => {
         const domain = 'https://projectsapi.zoho.com';
 
         let targetIds = taskIds || [];
-        socket.emit('projectsTasksLog', { type: 'info', message: `🗑️ Starting Deletion Engine...` });
 
         if (deleteAll) {
-             socket.emit('projectsTasksLog', { type: 'request', message: `Gathering ALL task IDs recursively via V3 API...` });
              targetIds = [];
-             
              const statusesToFetch = ['open', 'closed'];
              for (const currentStatus of statusesToFetch) {
                  let page = 1;
                  let hasMore = true;
-                 
                  while(hasMore && activeJobs[jobId].status !== 'ended') {
                      const fetchUrl = `${domain}/api/v3/portal/${portalId}/projects/${projectId}/tasks`;
                      try {
@@ -376,7 +379,6 @@ const handleStartBulkDeleteTasks = async (socket, data) => {
                              params: { page, per_page: 100, status: currentStatus }, 
                              timeout: 10000 
                          });
-                         
                          const tasks = response.data.tasks || [];
                          const newTasks = tasks.filter(t => !targetIds.includes(t.id_string || String(t.id)));
                          
@@ -384,56 +386,36 @@ const handleStartBulkDeleteTasks = async (socket, data) => {
                              targetIds.push(...newTasks.map(t => t.id_string || String(t.id)));
                              page++;
                          } else {
-                             socket.emit('projectsTasksLog', { type: 'info', message: `Reached end of ${currentStatus} tasks.` });
                              hasMore = false;
                          }
 
                          if (response.data.page_info && response.data.page_info.has_next_page === false) {
                              hasMore = false;
                          }
-
                      } catch(err) {
-                         if (err.response && (err.response.status === 400 || err.response.status === 404)) {
-                             hasMore = false; 
-                         } else {
-                             throw err;
-                         }
+                         if (err.response && (err.response.status === 400 || err.response.status === 404)) hasMore = false; 
+                         else throw err;
                      }
                  }
              }
-             socket.emit('projectsTasksLog', { type: 'info', message: `Found ${targetIds.length} total unique tasks to delete.` });
         }
 
         activeJobs[jobId].totalToProcess = targetIds.length;
         socket.emit('projectsDeleteStarted', { total: targetIds.length, profileName: selectedProfileName });
 
         for (let i = 0; i < targetIds.length; i++) {
-            if (!activeJobs[jobId] || activeJobs[jobId].status === 'ended') {
-                console.log(`[SERVER] Deletion aborted at task ${i}`);
-                break;
-            }
-            
+            if (!activeJobs[jobId] || activeJobs[jobId].status === 'ended') break;
             const taskId = targetIds[i];
             let isDeleted = false;
             let retryCount = 0;
 
-            if (i % 50 === 0) console.log(`[DELETE ENGINE] Processing task ${i + 1} of ${targetIds.length}...`);
-
             while (!isDeleted && retryCount < 3) {
                 if (!activeJobs[jobId] || activeJobs[jobId].status === 'ended') break;
-                
                 try {
                     const deleteUrl = `${domain}/api/v3/portal/${portalId}/projects/${projectId}/tasks/${taskId}`;
-                    socket.emit('projectsTasksLog', { type: 'request', message: `DELETE Task ID: ${taskId} (Attempt ${retryCount + 1})` });
-                    
-                    await axios.delete(deleteUrl, { 
-                        headers: { 'Authorization': `Zoho-oauthtoken ${access_token}` },
-                        timeout: 10000 
-                    });
-                    
+                    await axios.delete(deleteUrl, { headers: { 'Authorization': `Zoho-oauthtoken ${access_token}` }, timeout: 10000 });
                     socket.emit('projectsDeleteResult', { success: true, taskId, profileName: selectedProfileName });
                     isDeleted = true;
-                    
                 } catch (err) {
                     const status = err.response?.status;
                     const errorCode = err.response?.data?.error?.code;
@@ -441,11 +423,8 @@ const handleStartBulkDeleteTasks = async (socket, data) => {
                     if (err.response) errorMessage = err.response.data?.error?.details?.[0]?.message || err.response.data?.message || err.message;
 
                     if (err.code === 'ECONNABORTED' || err.message.includes('timeout')) {
-                        socket.emit('projectsTasksLog', { type: 'error', message: `⚠️ Network Timeout on ${taskId}. Retrying...` });
-                        retryCount++;
-                        await interruptibleSleep(2000, jobId);
+                        retryCount++; await interruptibleSleep(2000, jobId);
                     } else if (status === 401) {
-                        socket.emit('projectsTasksLog', { type: 'info', message: `🔄 Token expired mid-job! Generating new token...` });
                         const refreshed = await getValidAccessToken(activeProfile, 'projects', true); 
                         access_token = refreshed.access_token;
                         retryCount++;
@@ -453,33 +432,25 @@ const handleStartBulkDeleteTasks = async (socket, data) => {
                         let waitMinutes = 2; 
                         const waitMatch = errorMessage.match(/after (\d+) minutes/);
                         if (waitMatch) waitMinutes = parseInt(waitMatch[1]) + 1;
-                        socket.emit('projectsTasksLog', { type: 'error', message: `⚠️ ZOHO RATE LIMIT EXCEEDED. Automatic pause for ${waitMinutes} minutes...` });
                         await interruptibleSleep(waitMinutes * 60000, jobId); 
                         retryCount++;
                     } else if (status >= 500) {
-                        socket.emit('projectsTasksLog', { type: 'error', message: `⚠️ Zoho Internal Error (500) on ${taskId}. Server overloaded, waiting 10 seconds...` });
-                        await interruptibleSleep(10000, jobId);
-                        retryCount++;
+                        await interruptibleSleep(10000, jobId); retryCount++;
                     } else if (status === 404) {
-                        socket.emit('projectsTasksLog', { type: 'info', message: `Task ${taskId} returned 404 (already deleted).` });
                         socket.emit('projectsDeleteResult', { success: true, taskId, profileName: selectedProfileName });
                         isDeleted = true;
                     } else {
-                        socket.emit('projectsTasksLog', { type: 'error', message: `Failed DELETE on ${taskId}: ${errorMessage}` });
                         socket.emit('projectsDeleteResult', { success: false, taskId, error: errorMessage, profileName: selectedProfileName });
                         break; 
                     }
                 }
             }
-            
             await interruptibleSleep(1500, jobId); 
         }
     } catch (err) {
-        socket.emit('projectsTasksLog', { type: 'error', message: `Critical Delete Error: ${err.message}` });
         socket.emit('projectsDeleteError', { message: err.message, profileName: selectedProfileName });
     } finally {
         if (activeJobs[jobId]) {
-            console.log(`[DELETE ENGINE] Job Complete/Ended.`);
             socket.emit('bulkDeleteComplete', { profileName: selectedProfileName });
             delete activeJobs[jobId];
         }
@@ -542,133 +513,65 @@ const getTaskModuleId = async (portalId, activeProfile) => {
         timeout: 10000
     });
 
-    const modules = Array.isArray(response.data)
-        ? response.data
-        : (response.data?.modules || response.data?.data || []);
-
+    const modules = Array.isArray(response.data) ? response.data : (response.data?.modules || response.data?.data || []);
     const taskModule = modules.find((module) => {
-        const candidates = [module?.api_name, module?.name, module?.module_name, module?.display_name]
-            .filter(Boolean)
-            .map(v => String(v).toLowerCase());
+        const candidates = [module?.api_name, module?.name, module?.module_name, module?.display_name].filter(Boolean).map(v => String(v).toLowerCase());
         return candidates.includes('tasks') || candidates.includes('task');
     });
 
-    if (!taskModule) {
-        throw new Error('Could not find the Tasks module in Zoho Projects.');
-    }
-
+    if (!taskModule) throw new Error('Could not find the Tasks module in Zoho Projects.');
     return taskModule.id || taskModule.module_id || taskModule.moduleId;
-};
-
-const buildFieldTypePayload = (fieldType) => {
-    const normalized = String(fieldType || '').toLowerCase();
-
-    if (normalized === 'multiline') {
-        return { data_type: 'multiline', field_type: 'textarea' };
-    }
-    if (normalized === 'integer') {
-        return { data_type: 'integer', field_type: 'number' };
-    }
-    return { data_type: 'text', field_type: 'text' };
 };
 
 const findFieldInLayout = (layout, fieldLookupValue) => {
     if (!layout || !Array.isArray(layout.section_details)) return null;
-
     for (const section of layout.section_details) {
         const fields = section.customfield_details || [];
         const found = fields.find((field) => {
-            const candidates = [
-                field.column_name,
-                field.api_name,
-                field.display_name,
-                field.i18n_display_name,
-                field.id,
-                field.field_id
-            ].filter(Boolean).map(v => String(v).toLowerCase());
-
+            const candidates = [ field.column_name, field.api_name, field.display_name, field.i18n_display_name, field.id, field.field_id ].filter(Boolean).map(v => String(v).toLowerCase());
             return candidates.includes(String(fieldLookupValue || '').toLowerCase());
         });
-
         if (found) return found;
     }
-
     return null;
 };
 
 const handleCreateTaskField = async ({ activeProfile, portalId, projectId, layoutId, displayName, fieldType }) => {
-    console.log(`\n========================================================`);
-    console.log(`🚀 [DEBUG] STARTING ZOHO FIELD CREATION (INTERCEPTED METHOD)`);
-    console.log(`========================================================`);
-
     const { access_token } = await getValidAccessToken(activeProfile, 'projects');
     const moduleId = await getTaskModuleId(portalId, activeProfile);
 
-    // 1. Fetch the layout to dynamically get your Section ID (Task Information box)
-    console.log(`🔄 Fetching Layout to get Section ID...`);
     const layoutResponse = await axios.get(`https://projectsapi.zoho.com/restapi/portal/${portalId}/projects/${projectId}/tasklayouts`, {
-        headers: { 'Authorization': `Zoho-oauthtoken ${access_token}` },
-        timeout: 10000
+        headers: { 'Authorization': `Zoho-oauthtoken ${access_token}` }, timeout: 10000
     });
 
     const firstSection = layoutResponse.data?.section_details?.[0];
     const sectionId = firstSection?.id || firstSection?.section_id;
 
-    if (!sectionId) {
-        throw new Error("Could not locate a Section ID in your Task Layout to place the field.");
-    }
-    console.log(`🎯 Found Section ID: ${sectionId}`);
+    if (!sectionId) throw new Error("Could not locate a Section ID.");
 
-    // 2. Format field type to match the exact string Zoho expects
     let exactFieldType = "singleline";
     if (fieldType === "multiline" || fieldType === "textarea") exactFieldType = "multiline";
     if (fieldType === "integer" || fieldType === "number") exactFieldType = "integer";
-    if (fieldType === "email") exactFieldType = "email"; // 🔥 ADDED EMAIL LOGIC HERE
-	
-	
-    // 3. Build the exact payload you intercepted from the Network Tab
+    if (fieldType === "email") exactFieldType = "email"; 
+    
     const fieldPayload = {
         module: String(moduleId),
         layout_id: String(layoutId),
         section_id: String(sectionId),
         field_type: exactFieldType,
-        display_name: displayName, // Added so it gets your custom name immediately
-        field_property: {
-            is_pii: false,
-            is_encrypted: false,
-            context_property: {
-                is_mandatory: false,
-                has_info: false
-            }
-        }
+        display_name: displayName, 
+        field_property: { is_pii: false, is_encrypted: false, context_property: { is_mandatory: false, has_info: false } }
     };
 
-    // 4. Use the exact URL you discovered
     const createFieldUrl = `https://projectsapi.zoho.com/api/v3/portal/${portalId}/settings/fields`;
-
-    console.log(`📡 [API CALL] Sending Intercepted PUT Request: ${createFieldUrl}`);
-    console.dir(fieldPayload, { depth: null, colors: true });
 
     try {
         const createdFieldResponse = await axios.put(createFieldUrl, fieldPayload, {
-            headers: {
-                'Authorization': `Zoho-oauthtoken ${access_token}`,
-                'Content-Type': 'application/json'
-            },
-            timeout: 10000
+            headers: { 'Authorization': `Zoho-oauthtoken ${access_token}`, 'Content-Type': 'application/json' }, timeout: 10000
         });
 
-        console.log(`✅ [SUCCESS] Field created and attached directly to layout!`);
-        console.log(`========================================================\n`);
-
-        return {
-            success: true,
-            message: 'Field created and added to layout perfectly!',
-            fullResponse: createdFieldResponse.data
-        };
+        return { success: true, message: 'Field created successfully!', fullResponse: createdFieldResponse.data };
     } catch (error) {
-        console.log(`❌ [FAILED] Zoho rejected the Intercepted Request!`);
-        console.dir(error.response?.data || error.message, { depth: null, colors: true });
         const message = error.response?.data?.error?.details?.[0]?.message || error.response?.data?.message || error.message;
         throw new Error(`Zoho field create failed: ${message}`);
     }

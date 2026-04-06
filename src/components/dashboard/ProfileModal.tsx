@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Profile } from '@/App';
 import { useToast } from '@/hooks/use-toast';
-import { KeyRound, Loader2, Building, Cloud, Network, UserSquare, AppWindow, FolderKanban, Search, Video, Wrench, Calendar } from 'lucide-react'; 
+import { KeyRound, Loader2, Building, Cloud, Network, UserSquare, AppWindow, FolderKanban, Search, Video, Wrench, Calendar, Trash2 } from 'lucide-react'; 
 import { Socket } from 'socket.io-client';
 import { Separator } from '../ui/separator';
 import {
@@ -64,7 +64,7 @@ const getInitialFormData = (): Profile => ({
   },
   projects: {
     portalId: '',
-    cloudflareTrackingUrl: '', // 🚨 ADDED DEDICATED TRACKER FOR PROJECTS
+    cloudflareTrackingUrl: '', 
   },
   meeting: {
     zsoid: '',
@@ -107,10 +107,16 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
   const [qntrlOrgList, setQntrlOrgList] = useState<any[]>([]);
   const [isQntrlOrgModalOpen, setIsQntrlOrgModalOpen] = useState(false);
 
-  // --- NEW: Auto-Fetch States for Zoho People ---
+  // Auto-Fetch States for Zoho People
   const [isFetchingPeople, setIsFetchingPeople] = useState(false);
   const [peopleOrgList, setPeopleOrgList] = useState<any[]>([]);
   const [isPeopleOrgModalOpen, setIsPeopleOrgModalOpen] = useState(false);
+
+  // 🚨 THE CACHE BUSTER HELPER: Forces the Node server to always grab fresh data!
+  const getCacheBusterProfile = () => ({
+      ...formDataRef.current,
+      profileName: `temp_bypass_cache_${Date.now()}`
+  });
 
   useEffect(() => {
     if (isOpen) {
@@ -188,10 +194,9 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
             const org = data.organizations[0];
             setFormData(prev => ({ ...prev, desk: { ...(prev.desk as object), orgId: org.id.toString() } }));
             
+            // 🔥 Use Cache Buster Profile here too!
             socket.emit('getDeskDepartments', {
-                clientId: formDataRef.current.clientId,
-                clientSecret: formDataRef.current.clientSecret,
-                refreshToken: formDataRef.current.refreshToken,
+                activeProfile: getCacheBusterProfile(),
                 orgId: org.id
             });
         } else {
@@ -211,10 +216,9 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
             const dep = data.departments[0];
             setFormData(prev => ({ ...prev, desk: { ...(prev.desk as object), defaultDepartmentId: dep.id.toString() } }));
             
+            // 🔥 Use Cache Buster Profile here too!
             socket.emit('getDeskMailAddresses', {
-                clientId: formDataRef.current.clientId,
-                clientSecret: formDataRef.current.clientSecret,
-                refreshToken: formDataRef.current.refreshToken,
+                activeProfile: getCacheBusterProfile(),
                 orgId: formDataRef.current.desk?.orgId || '',
                 departmentId: dep.id
             });
@@ -271,9 +275,8 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
         toast({ title: "Qntrl Fetch Error", description: data.message, variant: "destructive" });
     };
 
-    // --- NEW: ZOHO PEOPLE SOCKET HANDLERS ---
+    // --- ZOHO PEOPLE SOCKET HANDLERS ---
     const handlePeopleOrgsResult = (data: { success: boolean, organizations: any[] }) => {
-        console.log("[FRONTEND LOG] Received People Organizations result from server:", data);
         setIsFetchingPeople(false);
         if (!data.success || !data.organizations || data.organizations.length === 0) {
             toast({ title: "No Organizations Found", description: "No Zoho People Orgs found in this account.", variant: "destructive" });
@@ -292,7 +295,6 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
     };
 
     const handlePeopleError = (data: { message: string }) => {
-        console.error("[FRONTEND LOG] People Fetch Error:", data.message);
         setIsFetchingPeople(false);
         toast({ title: "People Fetch Error", description: data.message, variant: "destructive" });
     };
@@ -364,6 +366,12 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
     onSave(formData, profile?.profileName);
   };
 
+  const handleClearForm = () => {
+    if (window.confirm("Are you sure you want to clear all fields? This will reset the form so you can add a fresh account without cache issues.")) {
+        setFormData(getInitialFormData());
+    }
+  };
+
   const handleGenerateToken = async () => {
     if (!formData.clientId || !formData.clientSecret) {
       toast({
@@ -416,10 +424,12 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
     }
 
     setIsFetchingPortals(true);
+    // 🔥 Bypasses the cache!
     socket.emit('getProjectsPortals', {
         clientId: formData.clientId,
         clientSecret: formData.clientSecret,
         refreshToken: formData.refreshToken,
+        profileName: `temp_bypass_cache_${Date.now()}`
     });
   };
 
@@ -429,10 +439,9 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
         return;
     }
     setIsFetchingDesk(true);
+    // 🔥 Completely bypasses the server memory cache!
     socket?.emit('getDeskOrganizations', {
-        clientId: formData.clientId,
-        clientSecret: formData.clientSecret,
-        refreshToken: formData.refreshToken
+        activeProfile: getCacheBusterProfile()
     });
   };
 
@@ -442,26 +451,21 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
         return;
     }
     setIsFetchingQntrl(true);
+    // 🔥 Completely bypasses the server memory cache!
     socket?.emit('getQntrlOrganizations', {
-        clientId: formData.clientId,
-        clientSecret: formData.clientSecret,
-        refreshToken: formData.refreshToken
+        activeProfile: getCacheBusterProfile()
     });
   };
 
   const handleFetchPeople = () => {
-    console.log("[FRONTEND LOG] Fetch People button clicked!");
     if (!formData.clientId || !formData.clientSecret || !formData.refreshToken) {
-        console.warn("[FRONTEND LOG] Missing credentials. Aborting.");
         toast({ title: "Missing Credentials", description: "Generate a Refresh Token first.", variant: "destructive" });
         return;
     }
     setIsFetchingPeople(true);
-    console.log("[FRONTEND LOG] Emitting 'getPeopleOrganizations' to server...");
+    // 🔥 Completely bypasses the server memory cache!
     socket?.emit('getPeopleOrganizations', {
-        clientId: formData.clientId,
-        clientSecret: formData.clientSecret,
-        refreshToken: formData.refreshToken
+        activeProfile: getCacheBusterProfile()
     });
   };
 
@@ -470,10 +474,19 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="sm:max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{profile ? 'Edit Profile' : 'Add New Profile'}</DialogTitle>
-          <DialogDescription>
-            Enter the shared credentials and service-specific settings for this Zoho account.
-          </DialogDescription>
+          <div className="flex justify-between items-start pr-8">
+            <div>
+              <DialogTitle>{profile ? 'Edit Profile' : 'Add New Profile'}</DialogTitle>
+              <DialogDescription>
+                Enter the shared credentials and service-specific settings for this Zoho account.
+              </DialogDescription>
+            </div>
+            {!profile && (
+              <Button type="button" variant="outline" size="sm" onClick={handleClearForm} className="text-red-500 border-red-200 hover:bg-red-50 mt-1">
+                <Trash2 className="h-4 w-4 mr-2" /> Clear Form
+              </Button>
+            )}
+          </div>
         </DialogHeader>
         <form onSubmit={handleSubmit}>
           {/* --- SHARED SETTINGS --- */}
@@ -622,7 +635,6 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
                           </Button>
                       </div>
                     </div>
-                    {/* 🚨 NEW: PROJECTS TRACKING URL FIELD */}
                     <div className="grid grid-cols-4 items-center gap-4">
                         <Label htmlFor="projects_cloudflareTrackingUrl" className="text-right flex flex-col">
                             <span>Tracker URL</span>
@@ -730,6 +742,8 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
       </DialogContent>
     </Dialog>
 
+    {/* REUSABLE SELECTOR MODALS */}
+
     <PortalSelectorModal
         isOpen={isPortalModalOpen}
         onClose={() => setIsPortalModalOpen(false)}
@@ -755,9 +769,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
             setIsDeskOrgModalOpen(false);
             setIsFetchingDesk(true);
             socket?.emit('getDeskDepartments', {
-                clientId: formDataRef.current.clientId,
-                clientSecret: formDataRef.current.clientSecret,
-                refreshToken: formDataRef.current.refreshToken,
+                activeProfile: getCacheBusterProfile(),
                 orgId: org.id
             });
         }}
@@ -775,9 +787,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
             setIsDeskDepModalOpen(false);
             setIsFetchingDesk(true);
             socket?.emit('getDeskMailAddresses', {
-                clientId: formDataRef.current.clientId,
-                clientSecret: formDataRef.current.clientSecret,
-                refreshToken: formDataRef.current.refreshToken,
+                activeProfile: getCacheBusterProfile(),
                 orgId: formDataRef.current.desk?.orgId || '',
                 departmentId: dep.id
             });

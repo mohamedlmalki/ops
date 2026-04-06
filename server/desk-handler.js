@@ -27,35 +27,51 @@ const interruptibleSleep = (ms, jobId) => {
     });
 };
 
+// 🚨 SMART FINDER: Guarantees it grabs the right profile even if names match!
+const getRealDeskProfile = (profiles, profileName) => {
+    return profiles.find(p => p.profileName === profileName && p.desk && p.desk.cloudflareTrackingUrl)
+        || profiles.find(p => p.profileName === profileName && p.desk && p.desk.defaultDepartmentId)
+        || profiles.find(p => p.profileName === profileName);
+};
+
+function injectTracking(description, email, selectedProfileName, deskConfig, ticketId) {
+    if (!deskConfig || !deskConfig.cloudflareTrackingUrl || deskConfig.cloudflareTrackingUrl.trim() === '') {
+        return description;
+    }
+
+    let finalDescription = description;
+    const baseUrl = deskConfig.cloudflareTrackingUrl.replace(/\/$/, '').trim();
+    const trackerDomain = baseUrl.replace(/^https?:\/\//, ''); 
+
+    const urlRegex = /(https?:\/\/[^\s"'<>]+)/g;
+    
+    finalDescription = finalDescription.replace(urlRegex, (url) => {
+        if (url.includes(trackerDomain)) {
+            if (url.includes('email=')) return url; 
+            const sep = url.includes('?') ? '&' : '?';
+            return `${url}${sep}email=${encodeURIComponent(email)}&profile=${encodeURIComponent(selectedProfileName + '_Desk')}&ticketId=${ticketId}`;
+        }
+        return url; 
+    });
+
+    const pixel = `<img src="${baseUrl}/track.gif?email=${encodeURIComponent(email)}&ticketId=${ticketId}&profile=${encodeURIComponent(selectedProfileName + '_Desk')}" width="1" height="1" alt="" style="display:none;" />`;
+    finalDescription += pixel;
+
+    return finalDescription;
+}
+
 const handleSendSingleTicket = async (data) => {
     const { email, subject, description, selectedProfileName, sendDirectReply } = data;
     if (!email || !selectedProfileName) return { success: false, error: 'Missing email or profile.' };
+    
     const profiles = readProfiles();
-    const activeProfile = profiles.find(p => p.profileName === selectedProfileName);
+    const activeProfile = getRealDeskProfile(profiles, selectedProfileName);
 
     try {
         if (!activeProfile) return { success: false, error: 'Profile not found.' };
         const deskConfig = activeProfile.desk;
 
-        // 🚨 ULTIMATE SMART SCANNER: Catches Plain Text AND HTML Links!
-        let finalDescription = description;
-        if (deskConfig.cloudflareTrackingUrl) {
-            const baseUrl = deskConfig.cloudflareTrackingUrl.replace(/\/$/, '');
-            const safeBaseUrl = baseUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // Escape for Regex
-            
-            // 1. UNIVERSAL LINK MATCHER: Finds the URL anywhere, even without href=""
-            const universalLinkRegex = new RegExp(`(${safeBaseUrl}[^\\s"'<>]*)`, 'g');
-            
-            finalDescription = finalDescription.replace(universalLinkRegex, (match) => {
-                if (match.includes('email=')) return match; // Prevent double-adding
-                const separator = match.includes('?') ? '&' : '?';
-                return `${match}${separator}email=${encodeURIComponent(email)}&profile=${encodeURIComponent(selectedProfileName)}&ticketId=Single`;
-            });
-
-            // 2. Inject the Open Pixel
-            const pixel = `<img src="${baseUrl}/track.gif?email=${encodeURIComponent(email)}&ticketId=Single&profile=${encodeURIComponent(selectedProfileName)}" width="1" height="1" alt="" style="display:none;" />`;
-            finalDescription += pixel;
-        }
+        const finalDescription = injectTracking(description, email, selectedProfileName, deskConfig, 'Single');
 
         const ticketData = { subject, description: finalDescription, departmentId: deskConfig.defaultDepartmentId, contact: { email }, channel: 'Email' };
 
@@ -82,38 +98,23 @@ const handleVerifyTicketEmail = async (data) => {
     const { ticket, profileName } = data;
     if (!ticket || !profileName) return { success: false, details: 'Missing ticket/profile.' };
     const profiles = readProfiles();
-    const activeProfile = profiles.find(p => p.profileName === profileName);
+    const activeProfile = getRealDeskProfile(profiles, profileName);
     if (!activeProfile) return { success: false, details: 'Profile not found.' };
     return await verifyTicketEmail(null, { ticket, profile: activeProfile });
 };
 
 const handleSendTestTicket = async (socket, data) => {
-    console.log(`[Desk] Sending Test Ticket to ${data.email}...`);
-    const { email, subject, description, selectedProfileName, sendDirectReply, verifyEmail, activeProfile } = data;
-     if (!email || !selectedProfileName) return socket.emit('testTicketResult', { success: false, error: 'Missing email or profile.' });
+    const { email, subject, description, selectedProfileName, sendDirectReply, verifyEmail } = data;
+    if (!email || !selectedProfileName) return socket.emit('testTicketResult', { success: false, error: 'Missing email or profile.' });
+    
+    const profiles = readProfiles();
+    const activeProfile = getRealDeskProfile(profiles, selectedProfileName);
+
     try {
         if (!activeProfile) return socket.emit('testTicketResult', { success: false, error: 'Profile not found.' });
         const deskConfig = activeProfile.desk;
 
-        // 🚨 ULTIMATE SMART SCANNER: Catches Plain Text AND HTML Links!
-        let finalDescription = description;
-        if (deskConfig.cloudflareTrackingUrl) {
-            const baseUrl = deskConfig.cloudflareTrackingUrl.replace(/\/$/, '');
-            const safeBaseUrl = baseUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); 
-            
-            // 1. UNIVERSAL LINK MATCHER
-            const universalLinkRegex = new RegExp(`(${safeBaseUrl}[^\\s"'<>]*)`, 'g');
-            
-            finalDescription = finalDescription.replace(universalLinkRegex, (match) => {
-                if (match.includes('email=')) return match; 
-                const separator = match.includes('?') ? '&' : '?';
-                return `${match}${separator}email=${encodeURIComponent(email)}&profile=${encodeURIComponent(selectedProfileName)}&ticketId=Test`;
-            });
-
-            // 2. Inject the Open Pixel
-            const pixel = `<img src="${baseUrl}/track.gif?email=${encodeURIComponent(email)}&ticketId=Test&profile=${encodeURIComponent(selectedProfileName)}" width="1" height="1" alt="" style="display:none;" />`;
-            finalDescription += pixel;
-        }
+        const finalDescription = injectTracking(description, email, selectedProfileName, deskConfig, 'Test');
 
         const ticketData = { subject, description: finalDescription, departmentId: deskConfig.defaultDepartmentId, contact: { email }, channel: 'Email' };
 
@@ -131,24 +132,23 @@ const handleSendTestTicket = async (socket, data) => {
         }
 
         socket.emit('testTicketResult', { success: true, fullResponse: fullResponseData });
-        console.log(`[Desk] Test Ticket #${newTicket.ticketNumber} created.`);
 
         if (verifyEmail) {
             verifyTicketEmail(socket, {ticket: newTicket, profile: activeProfile, resultEventName: 'testTicketVerificationResult', email});
         }
     } catch (error) {
         const { message, fullResponse } = parseError(error);
-        console.error(`[Desk] Test Ticket Error: ${message}`);
         socket.emit('testTicketResult', { success: false, error: message, fullResponse });
     }
 };
 
 const handleStartBulkCreate = async (socket, data) => {
-    const { emails, subject, description, delay, selectedProfileName, sendDirectReply, verifyEmail, activeProfile, stopAfterFailures = 0, displayName } = data;
+    const { emails, subject, description, delay, selectedProfileName, sendDirectReply, verifyEmail, stopAfterFailures = 0, displayName } = data;
     
-    console.log(`[Desk] Starting Bulk Job for ${selectedProfileName}. Total: ${emails.length} emails.`);
+    const profiles = readProfiles();
+    const activeProfile = getRealDeskProfile(profiles, selectedProfileName);
+
     const jobId = createJobId(socket.id, selectedProfileName, 'ticket');
-    
     activeJobs[jobId] = { status: 'running', consecutiveFailures: 0, stopAfterFailures: Number(stopAfterFailures) };
     
     try {
@@ -164,7 +164,6 @@ const handleStartBulkCreate = async (socket, data) => {
                  if (activeJobs[jobId].status !== 'paused') {
                      activeJobs[jobId].status = 'paused';
                      socket.emit('jobPaused', { profileName: selectedProfileName, reason: `Paused: ${activeJobs[jobId].consecutiveFailures} failures.` });
-                     console.log(`[Desk] Job Paused due to failures.`);
                  }
                  while (activeJobs[jobId]?.status === 'paused') await new Promise(resolve => setTimeout(resolve, 500));
             }
@@ -174,28 +173,8 @@ const handleStartBulkCreate = async (socket, data) => {
 
             const email = emails[i];
             if (!email.trim()) continue;
-
-            console.log(`[Desk] Processing (${i+1}/${emails.length}): ${email}`);
             
-            // 🚨 ULTIMATE SMART SCANNER: Catches Plain Text AND HTML Links!
-            let finalDescription = description;
-            if (deskConfig.cloudflareTrackingUrl) {
-                const baseUrl = deskConfig.cloudflareTrackingUrl.replace(/\/$/, '');
-                const safeBaseUrl = baseUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); 
-                
-                // 1. UNIVERSAL LINK MATCHER
-                const universalLinkRegex = new RegExp(`(${safeBaseUrl}[^\\s"'<>]*)`, 'g');
-                
-                finalDescription = finalDescription.replace(universalLinkRegex, (match) => {
-                    if (match.includes('email=')) return match; 
-                    const separator = match.includes('?') ? '&' : '?';
-                    return `${match}${separator}email=${encodeURIComponent(email)}&profile=${encodeURIComponent(selectedProfileName)}&ticketId=Bulk`;
-                });
-
-                // 2. Inject the Open Pixel
-                const pixel = `<img src="${baseUrl}/track.gif?email=${encodeURIComponent(email)}&ticketId=Bulk&profile=${encodeURIComponent(selectedProfileName)}" width="1" height="1" alt="" style="display:none;" />`;
-                finalDescription += pixel;
-            }
+            const finalDescription = injectTracking(description, email, selectedProfileName, deskConfig, 'Bulk');
             
             const ticketData = { subject, description: finalDescription, departmentId: deskConfig.defaultDepartmentId, contact: { email }, channel: 'Email', resolution: displayName };
             
@@ -230,24 +209,20 @@ const handleStartBulkCreate = async (socket, data) => {
                 });
 
                 if (verifyEmail) {
-                    console.log(`[Desk] Queuing verification for #${newTicket.ticketNumber}...`);
                     verifyTicketEmail(socket, { ticket: newTicket, profile: activeProfile, jobId, email });
                 }
 
             } catch (error) {
                 activeJobs[jobId].consecutiveFailures++;
                 const { message, fullResponse } = parseError(error);
-                console.error(`[Desk] Error for ${email}: ${message}`);
                 socket.emit('ticketResult', { email, success: false, error: message, fullResponse, profileName: selectedProfileName });
             }
         }
 
     } catch (error) {
-        console.error(`[Desk] Bulk Job Error: ${error.message}`);
         socket.emit('bulkError', { message: error.message || 'Error', profileName: selectedProfileName, jobType: 'ticket' });
     } finally {
         if (activeJobs[jobId]) {
-            console.log(`[Desk] Job Finished for ${selectedProfileName}`);
             const finalStatus = activeJobs[jobId].status;
             if (finalStatus === 'ended') socket.emit('bulkEnded', { profileName: selectedProfileName, jobType: 'ticket' });
             else socket.emit('bulkComplete', { profileName: selectedProfileName, jobType: 'ticket' });
@@ -258,11 +233,8 @@ const handleStartBulkCreate = async (socket, data) => {
 
 const verifyTicketEmail = async (socket, { ticket, profile, resultEventName = 'ticketUpdate', jobId, email }) => {
     let fullResponse = { ticketCreate: ticket, verifyEmail: {} };
-    console.log(`[Desk] Verifying ticket #${ticket.ticketNumber} for ${email}...`);
-    
     try {
         if (socket) await new Promise(resolve => setTimeout(resolve, 25000)); 
-        
         if (jobId && activeJobs[jobId] && activeJobs[jobId].status === 'ended') return;
         
         const [workflowHistoryResponse, notificationHistoryResponse] = await Promise.all([
@@ -274,7 +246,6 @@ const verifyTicketEmail = async (socket, { ticket, profile, resultEventName = 't
         fullResponse.verifyEmail.history = { workflowHistory: workflowHistoryResponse.data, notificationHistory: notificationHistoryResponse.data };
 
         if (allHistoryEvents.length > 0) {
-            
             let eventDetails = [];
             allHistoryEvents.forEach(evt => {
                 let detailStr = '';
@@ -305,21 +276,12 @@ const verifyTicketEmail = async (socket, { ticket, profile, resultEventName = 't
                 }
             });
 
-            const detailsMessage = eventDetails.length > 0
-                ? `Verified: ${eventDetails.join(' | ')}`
-                : 'Verified: Automation executed.';
+            const detailsMessage = eventDetails.length > 0 ? `Verified: ${eventDetails.join(' | ')}` : 'Verified: Automation executed.';
 
             if (jobId && activeJobs[jobId]) activeJobs[jobId].consecutiveFailures = 0;
-            console.log(`[Desk] Verification SUCCESS for #${ticket.ticketNumber}`);
-            
             if (socket) {
                 socket.emit(resultEventName, { 
-                    ticketNumber: ticket.ticketNumber, 
-                    success: true, 
-                    details: detailsMessage, 
-                    fullResponse, 
-                    profileName: profile.profileName,
-                    email: email 
+                    ticketNumber: ticket.ticketNumber, success: true, details: detailsMessage, fullResponse, profileName: profile.profileName, email: email 
                 });
             }
             return { success: true };
@@ -327,8 +289,6 @@ const verifyTicketEmail = async (socket, { ticket, profile, resultEventName = 't
             const failureResponse = await makeApiCall('get', `/api/v1/emailFailureAlerts?department=${profile.desk.defaultDepartmentId}`, null, profile, 'desk');
             const failure = failureResponse.data.data?.find(f => String(f.ticketNumber) === String(ticket.ticketNumber));
             fullResponse.verifyEmail.failure = failure || "No specific failure found.";
-            
-            console.log(`[Desk] Verification FAILED for #${ticket.ticketNumber}. Reason: ${failure ? failure.reason : 'No history found'}`);
 
             if (jobId && activeJobs[jobId]) {
                 activeJobs[jobId].consecutiveFailures++;
@@ -342,21 +302,14 @@ const verifyTicketEmail = async (socket, { ticket, profile, resultEventName = 't
 
             if (socket) {
                 socket.emit(resultEventName, { 
-                    ticketNumber: ticket.ticketNumber, 
-                    success: false, 
-                    details: failure ? `Verification Failed: ${failure.reason}` : 'Verification Failed: No automation history found (Timeout 25s).',
-                    fullResponse,
-                    profileName: profile.profileName,
-                    email: email 
+                    ticketNumber: ticket.ticketNumber, success: false, details: failure ? `Verification Failed: ${failure.reason}` : 'Verification Failed: No automation history found (Timeout 25s).', fullResponse, profileName: profile.profileName, email: email 
                 });
             }
             return { success: false };
         }
-
     } catch (error) {
         const { message, fullResponse: errorResponse } = parseError(error);
         fullResponse.verifyEmail.error = errorResponse;
-        console.error(`[Desk] Verification ERROR for #${ticket.ticketNumber}: ${message}`);
         
         if (jobId && activeJobs[jobId]) {
             activeJobs[jobId].consecutiveFailures++;
@@ -369,14 +322,7 @@ const verifyTicketEmail = async (socket, { ticket, profile, resultEventName = 't
         }
 
         if (socket) {
-             socket.emit(resultEventName, { 
-                ticketNumber: ticket.ticketNumber, 
-                success: false, 
-                details: `Verification Error: ${message}`,
-                fullResponse,
-                profileName: profile.profileName,
-                email: email
-            });
+             socket.emit(resultEventName, { ticketNumber: ticket.ticketNumber, success: false, details: `Verification Error: ${message}`, fullResponse, profileName: profile.profileName, email: email });
         }
         return { success: false };
     }
@@ -384,13 +330,10 @@ const verifyTicketEmail = async (socket, { ticket, profile, resultEventName = 't
 
 const handleGetEmailFailures = async (socket, data) => {
     try {
-        const { selectedProfileName } = data;
         const profiles = readProfiles();
-        const activeProfile = profiles.find(p => p.profileName === selectedProfileName);
+        const activeProfile = getRealDeskProfile(profiles, data.selectedProfileName);
 
-        if (!activeProfile || !activeProfile.desk) {
-            throw new Error('Desk profile not found for fetching email failures.');
-        }
+        if (!activeProfile || !activeProfile.desk) throw new Error('Desk profile not found for fetching email failures.');
 
         const departmentId = activeProfile.desk.defaultDepartmentId;
         const response = await makeApiCall('get', `/api/v1/emailFailureAlerts?department=${departmentId}&limit=50`, null, activeProfile, 'desk');
@@ -399,60 +342,46 @@ const handleGetEmailFailures = async (socket, data) => {
         const ticketLog = readTicketLog();
         const failuresWithEmails = failures.map(failure => {
             const logEntry = ticketLog.find(entry => String(entry.ticketNumber) === String(failure.ticketNumber));
-            return {
-                ...failure,
-                email: logEntry ? logEntry.email : 'Unknown',
-            };
+            return { ...failure, email: logEntry ? logEntry.email : 'Unknown' };
         });
 
         socket.emit('emailFailuresResult', { success: true, data: failuresWithEmails });
     } catch (error) {
-        const { message } = parseError(error);
-        socket.emit('emailFailuresResult', { success: false, error: message });
+        socket.emit('emailFailuresResult', { success: false, error: parseError(error).message });
     }
 };
 
 const handleClearEmailFailures = async (socket, data) => {
     try {
-        const { selectedProfileName } = data;
         const profiles = readProfiles();
-        const activeProfile = profiles.find(p => p.profileName === selectedProfileName);
+        const activeProfile = getRealDeskProfile(profiles, data.selectedProfileName);
 
-        if (!activeProfile || !activeProfile.desk) {
-            throw new Error('Desk profile not found for clearing email failures.');
-        }
+        if (!activeProfile || !activeProfile.desk) throw new Error('Desk profile not found for clearing email failures.');
 
         const departmentId = activeProfile.desk.defaultDepartmentId;
         await makeApiCall('patch', `/api/v1/emailFailureAlerts?department=${departmentId}`, null, activeProfile, 'desk');
         
         socket.emit('clearEmailFailuresResult', { success: true });
     } catch (error) {
-        const { message } = parseError(error);
-        socket.emit('clearEmailFailuresResult', { success: false, error: message });
+        socket.emit('clearEmailFailuresResult', { success: false, error: parseError(error).message });
     }
 };
 
 const handleGetMailReplyAddressDetails = async (socket, data) => {
     try {
-        const { selectedProfileName } = data;
         const profiles = readProfiles();
-        const activeProfile = profiles.find(p => p.profileName === selectedProfileName);
+        const activeProfile = getRealDeskProfile(profiles, data.selectedProfileName);
 
-        if (!activeProfile || !activeProfile.desk) {
-            return socket.emit('mailReplyAddressDetailsResult', { success: false, error: 'Desk profile not found' });
-        }
+        if (!activeProfile || !activeProfile.desk) return socket.emit('mailReplyAddressDetailsResult', { success: false, error: 'Desk profile not found' });
         
         const mailReplyAddressId = activeProfile.desk.mailReplyAddressId;
-        if (!mailReplyAddressId) {
-            return socket.emit('mailReplyAddressDetailsResult', { success: true, notConfigured: true });
-        }
+        if (!mailReplyAddressId) return socket.emit('mailReplyAddressDetailsResult', { success: true, notConfigured: true });
 
         const response = await makeApiCall('get', `/api/v1/mailReplyAddress/${mailReplyAddressId}`, null, activeProfile, 'desk');
         socket.emit('mailReplyAddressDetailsResult', { success: true, data: response.data });
 
     } catch (error) {
-        const { message } = parseError(error);
-        socket.emit('mailReplyAddressDetailsResult', { success: false, error: message });
+        socket.emit('mailReplyAddressDetailsResult', { success: false, error: parseError(error).message });
     }
 };
 
@@ -460,20 +389,16 @@ const handleUpdateMailReplyAddressDetails = async (socket, data) => {
     try {
         const { displayName, selectedProfileName } = data;
         const profiles = readProfiles();
-        const activeProfile = profiles.find(p => p.profileName === selectedProfileName);
+        const activeProfile = getRealDeskProfile(profiles, selectedProfileName);
 
-        if (!activeProfile || !activeProfile.desk || !activeProfile.desk.mailReplyAddressId) {
-            throw new Error('Mail Reply Address ID is not configured for this profile.');
-        }
+        if (!activeProfile || !activeProfile.desk || !activeProfile.desk.mailReplyAddressId) throw new Error('Mail Reply Address ID is not configured for this profile.');
 
         const mailReplyAddressId = activeProfile.desk.mailReplyAddressId;
-        const updateData = { displayName };
-        const response = await makeApiCall('patch', `/api/v1/mailReplyAddress/${mailReplyAddressId}`, updateData, activeProfile, 'desk');
+        const response = await makeApiCall('patch', `/api/v1/mailReplyAddress/${mailReplyAddressId}`, { displayName }, activeProfile, 'desk');
         
         socket.emit('mailReplyAddressDetailsResult', { success: true, data: response.data });
     } catch (error) {
-        const { message } = parseError(error);
-        socket.emit('mailReplyAddressDetailsResult', { success: false, error: message });
+        socket.emit('mailReplyAddressDetailsResult', { success: false, error: parseError(error).message });
     }
 };
 
@@ -509,9 +434,7 @@ const handleGetDeskMailAddresses = async (socket, data) => {
             profile.desk.orgId = data.orgId;
         }
         let url = '/api/v1/mailReplyAddress';
-        if (data.departmentId) {
-            url += `?departmentId=${data.departmentId}`;
-        }
+        if (data.departmentId) url += `?departmentId=${data.departmentId}`;
         const response = await makeApiCall('get', url, null, profile, 'desk');
         socket.emit('deskMailAddressesResult', { success: true, mailAddresses: response.data.data || response.data });
     } catch (error) {
@@ -520,16 +443,5 @@ const handleGetDeskMailAddresses = async (socket, data) => {
 };
 
 module.exports = {
-    setActiveJobs,
-    handleSendTestTicket,
-    handleStartBulkCreate,
-    handleGetEmailFailures,
-    handleClearEmailFailures,
-    handleGetMailReplyAddressDetails,
-    handleUpdateMailReplyAddressDetails,
-    handleSendSingleTicket,
-    handleVerifyTicketEmail,
-    handleGetDeskOrganizations,
-    handleGetDeskDepartments,
-    handleGetDeskMailAddresses
+    setActiveJobs, handleSendTestTicket, handleStartBulkCreate, handleGetEmailFailures, handleClearEmailFailures, handleGetMailReplyAddressDetails, handleUpdateMailReplyAddressDetails, handleSendSingleTicket, handleVerifyTicketEmail, handleGetDeskOrganizations, handleGetDeskDepartments, handleGetDeskMailAddresses
 };
