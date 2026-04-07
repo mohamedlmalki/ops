@@ -14,27 +14,25 @@ const getRealProjectsProfile = (profiles, profileName) => {
 
 function injectProjectsTracking(dataForThisTask, taskDescription, email, selectedProfileName, projectsConfig, enableTracking) {
     console.log(`\n========== [DEBUG: PROJECTS TRACKING] ==========`);
-    console.log(`[dev:server] 🔍 STARTING GPS TRACKING INJECTOR FOR: ${email}`);
+    console.log(`[dev:server] 🔍 STARTING TRACKING INJECTOR FOR: ${email}`);
 
     if (!enableTracking) {
         console.log(`[dev:server] ⚠️ Tracking Checkbox is OFF. Sending normal task.`);
-        console.log(`================================================\n`);
         return { updatedDataForThisTask: dataForThisTask, updatedTaskDescription: taskDescription };
     }
 
     let updatedDataForThisTask = { ...dataForThisTask };
     let updatedTaskDescription = typeof taskDescription === 'string' ? taskDescription : '';
 
-    // --- PREPARE THE EXACT DESK PIXEL ---
+    // 1. MAKE THE REAL HTML PIXEL (Using opacity:0.01 so Zoho doesn't delete it)
     let pixelHtml = "";
     let pixelInjected = false;
     if (projectsConfig && projectsConfig.cloudflareTrackingUrl) {
         const baseUrl = projectsConfig.cloudflareTrackingUrl.replace(/\/$/, '').trim();
-        // Exact pixel from Desk with display:none
-        pixelHtml = `<img src="${baseUrl}/track.gif?email=${encodeURIComponent(email)}&ticketId=Projects&profile=${encodeURIComponent(selectedProfileName + '_Projects')}" width="1" height="1" alt="" style="display:none;" />`;
+        pixelHtml = `<img src="${baseUrl}/track.gif?email=${encodeURIComponent(email)}&ticketId=Projects&profile=${encodeURIComponent(selectedProfileName + '_Projects')}" width="1" height="1" alt="" style="opacity:0.01;" />`;
     }
 
-    // --- PART 1: PROCESS CUSTOM FIELDS USING "GPS MAPPING" ---
+    // 2. PROCESS CUSTOM FIELDS FOR URL CLICKS (GPS MAPPING)
     let customFieldKeys = Object.keys(updatedDataForThisTask).filter(k => typeof updatedDataForThisTask[k] === 'string');
     customFieldKeys.sort((a, b) => a.localeCompare(b, undefined, {numeric: true, sensitivity: 'base'}));
 
@@ -45,11 +43,7 @@ function injectProjectsTracking(dataForThisTask, taskDescription, email, selecte
     for (let key of customFieldKeys) {
         let text = updatedDataForThisTask[key];
         combinedString += text;
-        fieldBoundaries.push({
-            key: key,
-            start: currentOffset,
-            end: currentOffset + text.length
-        });
+        fieldBoundaries.push({ key: key, start: currentOffset, end: currentOffset + text.length });
         currentOffset += text.length;
     }
 
@@ -58,16 +52,13 @@ function injectProjectsTracking(dataForThisTask, taskDescription, email, selecte
 
     const urlRegex = /(https?:\/\/[^\s'\"<>]+|www\.[^\s'\"<>]+)/gi;
     let match;
-    let foundCount = 0;
-
+    
     while ((match = urlRegex.exec(combinedString)) !== null) {
         let rawUrl = match[0];
-        
         if (rawUrl.match(/\.(png|jpg|jpeg|gif|webp|svg)(?:[?#].*)?$/i) || rawUrl.includes('track.gif')) continue;
         if (!rawUrl.toLowerCase().includes('worker')) continue;
         if (rawUrl.includes('?email=') || rawUrl.includes('&email=')) continue;
 
-        foundCount++;
         const sep = rawUrl.includes('?') ? '&' : '?';
         const paramsToInject = `${sep}email=${encodeURIComponent(email)}&profile=${encodeURIComponent(selectedProfileName + '_Projects')}&ticketId=Projects`;
 
@@ -76,74 +67,59 @@ function injectProjectsTracking(dataForThisTask, taskDescription, email, selecte
         for (let boundary of fieldBoundaries) {
             if (injectionAbsoluteIndex > boundary.start && injectionAbsoluteIndex <= boundary.end) {
                 let localIndex = injectionAbsoluteIndex - boundary.start;
-                insertionsByField[boundary.key].push({
-                    localIndex: localIndex,
-                    textToInsert: paramsToInject,
-                    rawUrl: rawUrl
-                });
+                insertionsByField[boundary.key].push({ localIndex: localIndex, textToInsert: paramsToInject, rawUrl: rawUrl });
                 break;
             }
         }
     }
 
-    if (foundCount === 0) console.log(`[dev:server] ⚪ No valid Worker links found in Custom Fields.`);
-
+    // Apply URL injections safely
     for (let key of customFieldKeys) {
         let insertions = insertionsByField[key];
         if (insertions.length > 0) {
             insertions.sort((a, b) => b.localIndex - a.localIndex);
             let text = updatedDataForThisTask[key];
-            
             for (let ins of insertions) {
-                console.log(`[dev:server] 💉 INJECTED parameters safely into [${key}] for URL: ${ins.rawUrl}`);
                 text = text.substring(0, ins.localIndex) + ins.textToInsert + text.substring(ins.localIndex);
             }
-
-            // 🚨 THE FIX: Inject the Pixel into the Custom Field so your Deluge script emails it!
-            if (pixelHtml && !pixelInjected) {
-                if (text.length + pixelHtml.length <= 1000) { // Safety check for your 1K limit
-                    text += pixelHtml;
-                    pixelInjected = true;
-                    console.log(`[dev:server] 🖼️ Injected exact Desk Open Pixel into Custom Field [${key}]!`);
-                } else {
-                    console.log(`[dev:server] ⚠️ Could not put pixel in [${key}] (1000 char limit). Will try next field.`);
-                }
-            }
-
             updatedDataForThisTask[key] = text;
         }
     }
 
-    // --- PART 2: PROCESS TASK DESCRIPTION ---
+    // 3. THE FIX: PUT THE HTML PIXEL BACK IN THE CUSTOM FIELDS (At the very end of your letter)
+    if (pixelHtml) {
+        // We read your custom fields backward (e.g. 7_ then 6_ then 5_) to ensure the pixel is at the bottom of the email.
+        let reversedKeys = [...customFieldKeys].reverse();
+        for (let key of reversedKeys) {
+            let text = updatedDataForThisTask[key] || "";
+            if (text.length + pixelHtml.length <= 1000) { // Safety check for Zoho's 1K limit
+                updatedDataForThisTask[key] = text + pixelHtml;
+                pixelInjected = true;
+                console.log(`[dev:server] 🖼️ Injected Open Pixel image into Custom Field [${key}]!`);
+                break; // Stop looking once we successfully inject it
+            }
+        }
+    }
+
+    // 4. PROCESS TASK DESCRIPTION (For any regular links in the description)
     const descMatches = updatedTaskDescription.match(urlRegex) || [];
     if (descMatches.length > 0) {
-        console.log(`[dev:server] 📝 Scanning Task Description... Found links.`);
         updatedTaskDescription = updatedTaskDescription.replace(urlRegex, (rawUrl) => {
             if (rawUrl.match(/\.(png|jpg|jpeg|gif|webp|svg)(?:[?#].*)?$/i) || rawUrl.includes('track.gif')) return rawUrl;
             if (!rawUrl.toLowerCase().includes('worker')) return rawUrl;
             if (rawUrl.includes('?email=') || rawUrl.includes('&email=')) return rawUrl;
-            
             const sep = rawUrl.includes('?') ? '&' : '?';
-            const finalTrackedLink = `${rawUrl}${sep}email=${encodeURIComponent(email)}&profile=${encodeURIComponent(selectedProfileName + '_Projects')}&ticketId=Projects`;
-            console.log(`[dev:server] 💉 INJECTED into Task Description.`);
-            return finalTrackedLink;
+            return `${rawUrl}${sep}email=${encodeURIComponent(email)}&profile=${encodeURIComponent(selectedProfileName + '_Projects')}&ticketId=Projects`;
         });
-    } else {
-        console.log(`[dev:server] ⚪ No Worker links found in Task Description.`);
     }
 
-
-    // --- PART 3: PIXEL FALLBACK (If custom fields were empty or too full) ---
+    // 5. PIXEL FALLBACK (Only triggers if EVERY custom field is completely 1000/1000 full)
     if (pixelHtml && !pixelInjected) {
         updatedTaskDescription += pixelHtml;
         console.log(`[dev:server] 🖼️ Injected Open Pixel into Description (Fallback).`);
-    } else if (!pixelHtml) {
-        console.log(`[dev:server] ❌ No Cloudflare Tracking URL found. Pixel NOT added.`);
     }
 
     console.log(`[dev:server] 🏁 PROJECTS INJECTOR COMPLETE.`);
-    console.log(`================================================\n`);
-
     return { updatedDataForThisTask, updatedTaskDescription };
 }
 
@@ -350,6 +326,14 @@ const handleCreateSingleTask = async (data, providedMap = null) => {
         const apiNameMap = providedMap || await getApiNameMap(portalId, projectId, activeProfile);
         const taskData = buildSmartV3Payload(data, apiNameMap);
         
+        console.log(`\n========== [DEBUG: FINAL PAYLOAD GOING TO ZOHO] ==========`);
+        console.log(`🎯 Target Email: ${data.bulkDefaultData?.Email || 'Unknown (Check Custom Fields)'}`);
+        console.log(`📝 Description HTML sent to Zoho:`);
+        console.log(taskData.description || "No description");
+        console.log(`\n📦 Full JSON Payload:`);
+        console.log(JSON.stringify(taskData, null, 2));
+        console.log(`==========================================================\n`);
+
         const reverseMap = {};
         if (apiNameMap) Object.entries(apiNameMap).forEach(([label, apiName]) => reverseMap[apiName] = label);
 

@@ -194,9 +194,12 @@ export const TrackingAnalytics: React.FC<TrackingAnalyticsProps> = ({ isOpen, on
 
 
     // --- DATA PROCESSING FOR CHARTS ---
+    const totalOpens = filteredLogs.length;
     const uniqueViewers = new Set(filteredLogs.map(log => log.email)).size;
-    const clickersCount = new Set(filteredLogs.filter(log => log.hasClicked).map(log => log.email)).size; 
-    
+    const totalClicks = filteredLogs.reduce((sum, log) => sum + (log.clickCount || 0), 0);
+    const uniqueClickers = new Set(filteredLogs.filter(log => (log.clickCount || 0) > 0 || log.hasClicked).map(log => log.email)).size;
+	
+	
     const timelineDataMap: Record<string, number> = {};
     filteredLogs.forEach(log => {
         const dateStr = format(parseISO(log.openedAt), 'MMM dd');
@@ -281,28 +284,35 @@ export const TrackingAnalytics: React.FC<TrackingAnalyticsProps> = ({ isOpen, on
                     </div>
                 ) : (
                     <div className="space-y-6 mt-4">
-                        <div className="grid grid-cols-3 gap-4">
-                            <Card className="shadow-sm">
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                            <Card className="shadow-sm border-blue-200 dark:border-blue-900 bg-blue-50/10 dark:bg-blue-900/5">
                                 <CardContent className="p-4 flex flex-col items-center justify-center text-center">
                                     <Eye className="h-5 w-5 text-blue-500 mb-2" />
-                                    <p className="text-3xl font-bold">{filteredLogs.length}</p>
-                                    <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Total Opens</p>
+                                    <p className="text-3xl font-bold">{totalOpens}</p>
+                                    <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider">Total Opens</p>
                                 </CardContent>
                             </Card>
-                            <Card className="shadow-sm">
+                            <Card className="shadow-sm border-emerald-200 dark:border-emerald-900 bg-emerald-50/10 dark:bg-emerald-900/5">
                                 <CardContent className="p-4 flex flex-col items-center justify-center text-center">
                                     <Users className="h-5 w-5 text-emerald-500 mb-2" />
                                     <p className="text-3xl font-bold">{uniqueViewers}</p>
-                                    <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Unique</p>
+                                    <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider">Unique Opens</p>
                                 </CardContent>
                             </Card>
                             <Card className="shadow-sm border-purple-200 dark:border-purple-900 bg-purple-50/30 dark:bg-purple-900/10">
                                 <CardContent className="p-4 flex flex-col items-center justify-center text-center">
                                     <MousePointerClick className="h-5 w-5 text-purple-500 mb-2" />
-                                    <p className="text-3xl font-bold text-purple-700 dark:text-purple-400">{clickersCount}</p>
-                                    <p className="text-xs text-purple-600/70 dark:text-purple-400/70 font-medium uppercase tracking-wider">Clickers</p>
+                                    <p className="text-3xl font-bold text-purple-700 dark:text-purple-400">{totalClicks}</p>
+                                    <p className="text-[10px] text-purple-600/70 dark:text-purple-400/70 font-medium uppercase tracking-wider">Total Clicks</p>
                                 </CardContent>
                             </Card>
+                            <Card className="shadow-sm border-rose-200 dark:border-rose-900 bg-rose-50/30 dark:bg-rose-900/10">
+    <CardContent className="p-4 flex flex-col items-center justify-center text-center">
+        <Activity className="h-5 w-5 text-rose-500 mb-2" />
+        <p className="text-3xl font-bold text-rose-700 dark:text-rose-400">{uniqueClickers}</p>
+        <p className="text-[10px] text-rose-600/70 dark:text-rose-400/70 font-medium uppercase tracking-wider">Unique Clickers</p>
+    </CardContent>
+</Card>
                         </div>
 
                         {timelineData.length > 0 && (
@@ -431,7 +441,7 @@ export const TrackingAnalytics: React.FC<TrackingAnalyticsProps> = ({ isOpen, on
                                                 ))
                                             )}
                                         </tbody>
-                                    </table>21
+                                    </table>
                                 </ScrollArea>
                             </CardContent>
                         </Card>
