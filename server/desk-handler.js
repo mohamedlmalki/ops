@@ -1,7 +1,7 @@
 // --- FILE: server/desk-handler.js ---
-
+const { Queue } = require('bullmq');
+const { connection, hireCashier } = require('./worker');
 const { makeApiCall, parseError, writeToTicketLog, createJobId, readTicketLog, readProfiles } = require('./utils');
-const { ticketQueue } = require('./queue');
 
 let activeJobs = {};
 
@@ -11,81 +11,37 @@ const setActiveJobs = (jobsObject) => {
     activeJobs = jobsObject;
 };
 
-const interruptibleSleep = (ms, jobId) => {
-    return new Promise(resolve => {
-        if (ms <= 0) return resolve();
-        const interval = 100;
-        let elapsed = 0;
-        const timerId = setInterval(() => {
-            if (!activeJobs[jobId] || activeJobs[jobId].status === 'ended') {
-                clearInterval(timerId);
-                return resolve();
-            }
-            elapsed += interval;
-            if (elapsed >= ms) {
-                clearInterval(timerId);
-                resolve();
-            }
-        }, interval);
-    });
-};
-
 const getRealDeskProfile = (profiles, profileName) => {
     return profiles.find(p => p.profileName === profileName && p.desk && p.desk.cloudflareTrackingUrl)
         || profiles.find(p => p.profileName === profileName && p.desk && p.desk.defaultDepartmentId)
         || profiles.find(p => p.profileName === profileName);
 };
 
-// 🧠 ULTRA-SIMPLE SCANNER: Appends params to workers.dev links + ignores images + adds Pixel
+// 🧠 ULTRA-SIMPLE SCANNER: Logs Removed for Clean CMD!
 async function injectSmartTracking(description, email, selectedProfileName, deskConfig, ticketId, enableTracking) {
-    console.log(`\n[dev:server] ------------------------------------------------`);
-    console.log(`[dev:server] 🔍 STARTING TRACKING INJECTOR FOR: ${email}`);
-    
-    if (!enableTracking) {
-        console.log(`[dev:server] ⚠️ Tracking Checkbox is OFF. Sending normal email.`);
-        console.log(`[dev:server] ------------------------------------------------\n`);
-        return description;
-    }
+    if (!enableTracking) return description;
 
     let newText = description;
-
-    // 1. Look for ANY URL ending in .workers.dev that you pasted in the email
     const workerUrlRegex = /(https?:\/\/[^\s'\"<>]+workers\.dev[^\s'\"<>]*)/gi;
     let rawMatches = description.match(workerUrlRegex) || [];
     let uniqueLinks = [...new Set(rawMatches)];
 
-    console.log(`[dev:server] 🔗 Found ${uniqueLinks.length} Cloudflare Worker link(s) in the text.`);
-
-    // 2. Inject parameters into those links
     for (let rawUrl of uniqueLinks) {
         if (rawUrl.match(/\.(png|jpg|jpeg|gif|webp|svg)(?:[?#].*)?$/i) || rawUrl.includes('track.gif')) {
-            console.log(`[dev:server] ⏭️ Skipped (Image or Pixel URL: ${rawUrl})`);
             continue;
         }
-        
         if (!rawUrl.includes('?email=') && !rawUrl.includes('&email=')) {
             const separator = rawUrl.includes('?') ? '&' : '?';
             const finalTrackedLink = `${rawUrl}${separator}email=${encodeURIComponent(email)}&profile=${encodeURIComponent(selectedProfileName + '_Desk')}&ticketId=${encodeURIComponent(ticketId)}`;
-            
             newText = newText.split(rawUrl).join(finalTrackedLink);
-            console.log(`[dev:server] 💉 Injected parameters into: ${rawUrl}`);
-        } else {
-            console.log(`[dev:server] ⏭️ Skipped (Parameters already exist on ${rawUrl})`);
         }
     }
 
-    // 3. Inject the invisible Open Pixel at the bottom
     if (deskConfig && deskConfig.cloudflareTrackingUrl) {
         const baseUrl = deskConfig.cloudflareTrackingUrl.replace(/\/$/, '').trim();
         const pixel = `<img src="${baseUrl}/track.gif?email=${encodeURIComponent(email)}&ticketId=${ticketId}&profile=${encodeURIComponent(selectedProfileName + '_Desk')}" width="1" height="1" alt="" style="display:none;" />`;
         newText += pixel;
-        console.log(`[dev:server] 🖼️ Injected invisible Open Pixel at the bottom.`);
-    } else {
-        console.log(`[dev:server] ❌ No Cloudflare Tracking URL found in Profile settings! Pixel NOT added.`);
     }
-
-    console.log(`[dev:server] 🏁 INJECTOR COMPLETE.`);
-    console.log(`[dev:server] ------------------------------------------------\n`);
     
     return newText;
 }
@@ -183,15 +139,22 @@ const handleStartBulkCreate = async (socket, data) => {
     try {
         if (!activeProfile) throw new Error('Profile not found.');
         const deskConfig = activeProfile.desk;
+        const queueName = `ticketQueue_${selectedProfileName}`;
+        
+        hireCashier(selectedProfileName);
 
+        const myAccountQueue = new Queue(queueName, { connection });
+        await myAccountQueue.drain(true).catch(() => {});
+
+        // 🚨 NATIVE DELAY RESTORED: BullMQ handles the waiting!
         const jobs = emails.filter(e => e.trim()).map((email, index) => ({
             name: 'createTicket',
             data: { email, subject, description, selectedProfileName, sendDirectReply, verifyEmail, displayName, enableTracking, deskConfig, activeProfile, jobId },
             opts: { delay: delay > 0 ? index * (delay * 1000) : 0 } 
         }));
 
-        await ticketQueue.addBulk(jobs);
-        console.log(`[QUEUE] Added ${jobs.length} tickets to Redis for ${selectedProfileName}`);
+        await myAccountQueue.addBulk(jobs);
+        console.log(`[QUEUE] 📦 Dropped ${jobs.length} tickets onto ${queueName}'s desk!`);
 
     } catch (error) {
         socket.emit('bulkError', { message: error.message || 'Error', profileName: selectedProfileName, jobType: 'ticket' });
@@ -226,7 +189,6 @@ const processSingleTicketJob = async (jobData) => {
         if (verifyEmail) {
             const verifyResult = await verifyTicketEmail(null, { ticket: newTicket, profile: activeProfile, jobId, email });
             if (!verifyResult.success) {
-                // Throwing an error here marks it as failed in BullMQ so UI sees the red X
                 throw new Error(JSON.stringify({ email, success: false, error: verifyResult.details || "Verification Failed", fullResponse: fullResponseData, profileName: selectedProfileName }));
             }
             successMessage += ` | ${verifyResult.details}`;
@@ -305,7 +267,6 @@ const verifyTicketEmail = async (socket, { ticket, profile, resultEventName = 't
                 if (activeJobs[jobId].stopAfterFailures > 0 && activeJobs[jobId].consecutiveFailures >= activeJobs[jobId].stopAfterFailures) {
                     if (activeJobs[jobId].status !== 'paused') {
                         activeJobs[jobId].status = 'paused';
-                        // THE CRASH FIX: Added if(socket)
                         if (socket) socket.emit('jobPaused', { profileName: profile.profileName, reason: `Paused: Verification failed for #${ticket.ticketNumber}.` });
                     }
                 }
@@ -327,7 +288,6 @@ const verifyTicketEmail = async (socket, { ticket, profile, resultEventName = 't
              if (activeJobs[jobId].stopAfterFailures > 0 && activeJobs[jobId].consecutiveFailures >= activeJobs[jobId].stopAfterFailures) {
                 if (activeJobs[jobId].status !== 'paused') {
                     activeJobs[jobId].status = 'paused';
-                    // THE CRASH FIX: Added if(socket)
                     if (socket) socket.emit('jobPaused', { profileName: profile.profileName, reason: `Paused: Verification Error.` });
                 }
             }
