@@ -1,8 +1,11 @@
 // --- FILE: server/desk-handler.js ---
 
 const { makeApiCall, parseError, writeToTicketLog, createJobId, readTicketLog, readProfiles } = require('./utils');
+const { ticketQueue } = require('./queue');
 
 let activeJobs = {};
+
+const getActiveJobs = () => activeJobs;
 
 const setActiveJobs = (jobsObject) => {
     activeJobs = jobsObject;
@@ -55,13 +58,11 @@ async function injectSmartTracking(description, email, selectedProfileName, desk
 
     // 2. Inject parameters into those links
     for (let rawUrl of uniqueLinks) {
-        // Skip images and the tracking pixel
         if (rawUrl.match(/\.(png|jpg|jpeg|gif|webp|svg)(?:[?#].*)?$/i) || rawUrl.includes('track.gif')) {
             console.log(`[dev:server] ⏭️ Skipped (Image or Pixel URL: ${rawUrl})`);
             continue;
         }
         
-        // If it doesn't already have an email parameter, add it!
         if (!rawUrl.includes('?email=') && !rawUrl.includes('&email=')) {
             const separator = rawUrl.includes('?') ? '&' : '?';
             const finalTrackedLink = `${rawUrl}${separator}email=${encodeURIComponent(email)}&profile=${encodeURIComponent(selectedProfileName + '_Desk')}&ticketId=${encodeURIComponent(ticketId)}`;
@@ -173,90 +174,69 @@ const handleSendTestTicket = async (socket, data) => {
 
 const handleStartBulkCreate = async (socket, data) => {
     const { emails, subject, description, delay, selectedProfileName, sendDirectReply, verifyEmail, stopAfterFailures = 0, displayName, enableTracking } = data;
-    
     const profiles = readProfiles();
     const activeProfile = getRealDeskProfile(profiles, selectedProfileName);
-
     const jobId = createJobId(socket.id, selectedProfileName, 'ticket');
+    
     activeJobs[jobId] = { status: 'running', consecutiveFailures: 0, stopAfterFailures: Number(stopAfterFailures) };
     
     try {
         if (!activeProfile) throw new Error('Profile not found.');
         const deskConfig = activeProfile.desk;
-        if (sendDirectReply && !deskConfig.fromEmailAddress) throw new Error(`Profile "${selectedProfileName}" missing "fromEmailAddress".`);
-        
-        for (let i = 0; i < emails.length; i++) {
-            if (!activeJobs[jobId] || activeJobs[jobId].status === 'ended') break;
-            while (activeJobs[jobId]?.status === 'paused') await new Promise(resolve => setTimeout(resolve, 500));
 
-            if (activeJobs[jobId].stopAfterFailures > 0 && activeJobs[jobId].consecutiveFailures >= activeJobs[jobId].stopAfterFailures) {
-                 if (activeJobs[jobId].status !== 'paused') {
-                     activeJobs[jobId].status = 'paused';
-                     socket.emit('jobPaused', { profileName: selectedProfileName, reason: `Paused: ${activeJobs[jobId].consecutiveFailures} failures.` });
-                 }
-                 while (activeJobs[jobId]?.status === 'paused') await new Promise(resolve => setTimeout(resolve, 500));
-            }
+        const jobs = emails.filter(e => e.trim()).map((email, index) => ({
+            name: 'createTicket',
+            data: { email, subject, description, selectedProfileName, sendDirectReply, verifyEmail, displayName, enableTracking, deskConfig, activeProfile, jobId },
+            opts: { delay: delay > 0 ? index * (delay * 1000) : 0 } 
+        }));
 
-            if (i > 0 && delay > 0) await interruptibleSleep(delay * 1000, jobId);
-            if (!activeJobs[jobId] || activeJobs[jobId].status === 'ended') break;
-
-            const email = emails[i];
-            if (!email.trim()) continue;
-            
-            const finalDescription = await injectSmartTracking(description, email, selectedProfileName, deskConfig, 'Bulk', enableTracking);
-            
-            const ticketData = { subject, description: finalDescription, departmentId: deskConfig.defaultDepartmentId, contact: { email }, channel: 'Email', resolution: displayName };
-            
-            try {
-                const ticketResponse = await makeApiCall('post', '/api/v1/tickets', ticketData, activeProfile, 'desk');
-                const newTicket = ticketResponse.data;
-                let successMessage = `Ticket #${newTicket.ticketNumber} created.`;
-                let fullResponseData = { ticketCreate: newTicket };
-                
-                writeToTicketLog({ ticketNumber: newTicket.ticketNumber, email });
-
-                if (sendDirectReply) {
-                    try {
-                        const replyData = { fromEmailAddress: deskConfig.fromEmailAddress, to: email, content: finalDescription, contentType: 'html', channel: 'EMAIL' };
-                        const replyResponse = await makeApiCall('post', `/api/v1/tickets/${newTicket.id}/sendReply`, replyData, activeProfile, 'desk');
-                        successMessage += ` Reply sent.`;
-                        fullResponseData.sendReply = replyResponse.data;
-                    } catch (replyError) {
-                        const { message } = parseError(replyError);
-                        successMessage += ` Reply Failed: ${message}`;
-                        fullResponseData.sendReply = { error: parseError(replyError) };
-                    }
-                }
-
-                socket.emit('ticketResult', { 
-                    email, 
-                    success: true, 
-                    ticketNumber: newTicket.ticketNumber, 
-                    details: successMessage,
-                    fullResponse: fullResponseData,
-                    profileName: selectedProfileName
-                });
-
-                if (verifyEmail) {
-                    verifyTicketEmail(socket, { ticket: newTicket, profile: activeProfile, jobId, email });
-                }
-
-            } catch (error) {
-                activeJobs[jobId].consecutiveFailures++;
-                const { message, fullResponse } = parseError(error);
-                socket.emit('ticketResult', { email, success: false, error: message, fullResponse, profileName: selectedProfileName });
-            }
-        }
+        await ticketQueue.addBulk(jobs);
+        console.log(`[QUEUE] Added ${jobs.length} tickets to Redis for ${selectedProfileName}`);
 
     } catch (error) {
         socket.emit('bulkError', { message: error.message || 'Error', profileName: selectedProfileName, jobType: 'ticket' });
-    } finally {
-        if (activeJobs[jobId]) {
-            const finalStatus = activeJobs[jobId].status;
-            if (finalStatus === 'ended') socket.emit('bulkEnded', { profileName: selectedProfileName, jobType: 'ticket' });
-            else socket.emit('bulkComplete', { profileName: selectedProfileName, jobType: 'ticket' });
-            delete activeJobs[jobId];
+    }
+};
+
+const processSingleTicketJob = async (jobData) => {
+    const { email, subject, description, selectedProfileName, sendDirectReply, verifyEmail, displayName, enableTracking, deskConfig, activeProfile, jobId } = jobData;
+    
+    try {
+        const finalDescription = await injectSmartTracking(description, email, selectedProfileName, deskConfig, 'Bulk', enableTracking);
+        const ticketData = { subject, description: finalDescription, departmentId: deskConfig.defaultDepartmentId, contact: { email }, channel: 'Email', resolution: displayName };
+        
+        const ticketResponse = await makeApiCall('post', '/api/v1/tickets', ticketData, activeProfile, 'desk');
+        const newTicket = ticketResponse.data;
+        let successMessage = `Ticket #${newTicket.ticketNumber} created.`;
+        let fullResponseData = { ticketCreate: newTicket };
+        
+        writeToTicketLog({ ticketNumber: newTicket.ticketNumber, email });
+
+        if (sendDirectReply) {
+            try {
+                const replyData = { fromEmailAddress: deskConfig.fromEmailAddress, to: email, content: finalDescription, contentType: 'html', channel: 'EMAIL' };
+                const replyResponse = await makeApiCall('post', `/api/v1/tickets/${newTicket.id}/sendReply`, replyData, activeProfile, 'desk');
+                successMessage += ` Reply sent.`;
+                fullResponseData.sendReply = replyResponse.data;
+            } catch (replyError) {
+                successMessage += ` Reply Failed: ${parseError(replyError).message}`;
+            }
         }
+
+        if (verifyEmail) {
+            const verifyResult = await verifyTicketEmail(null, { ticket: newTicket, profile: activeProfile, jobId, email });
+            if (!verifyResult.success) {
+                // Throwing an error here marks it as failed in BullMQ so UI sees the red X
+                throw new Error(JSON.stringify({ email, success: false, error: verifyResult.details || "Verification Failed", fullResponse: fullResponseData, profileName: selectedProfileName }));
+            }
+            successMessage += ` | ${verifyResult.details}`;
+        }
+
+        return { email, success: true, ticketNumber: newTicket.ticketNumber, details: successMessage, fullResponse: fullResponseData, profileName: selectedProfileName };
+
+    } catch (error) {
+        const { message, fullResponse } = parseError(error);
+        throw new Error(JSON.stringify({ email, success: false, error: message, fullResponse, profileName: selectedProfileName }));
     }
 };
 
@@ -264,7 +244,7 @@ const verifyTicketEmail = async (socket, { ticket, profile, resultEventName = 't
     let fullResponse = { ticketCreate: ticket, verifyEmail: {} };
     try {
         if (socket) await new Promise(resolve => setTimeout(resolve, 25000)); 
-        if (jobId && activeJobs[jobId] && activeJobs[jobId].status === 'ended') return;
+        if (jobId && activeJobs[jobId] && activeJobs[jobId].status === 'ended') return { success: false, details: 'Job Ended' };
         
         const [workflowHistoryResponse, notificationHistoryResponse] = await Promise.all([
             makeApiCall('get', `/api/v1/tickets/${ticket.id}/History?eventFilter=WorkflowHistory`, null, profile, 'desk'),
@@ -313,28 +293,30 @@ const verifyTicketEmail = async (socket, { ticket, profile, resultEventName = 't
                     ticketNumber: ticket.ticketNumber, success: true, details: detailsMessage, fullResponse, profileName: profile.profileName, email: email 
                 });
             }
-            return { success: true };
+            return { success: true, details: detailsMessage };
         } else {
             const failureResponse = await makeApiCall('get', `/api/v1/emailFailureAlerts?department=${profile.desk.defaultDepartmentId}`, null, profile, 'desk');
             const failure = failureResponse.data.data?.find(f => String(f.ticketNumber) === String(ticket.ticketNumber));
             fullResponse.verifyEmail.failure = failure || "No specific failure found.";
+            const failMessage = failure ? `Verification Failed: ${failure.reason}` : 'Verification Failed: No automation history found.';
 
             if (jobId && activeJobs[jobId]) {
                 activeJobs[jobId].consecutiveFailures++;
                 if (activeJobs[jobId].stopAfterFailures > 0 && activeJobs[jobId].consecutiveFailures >= activeJobs[jobId].stopAfterFailures) {
                     if (activeJobs[jobId].status !== 'paused') {
                         activeJobs[jobId].status = 'paused';
-                        socket.emit('jobPaused', { profileName: profile.profileName, reason: `Paused: Verification failed for #${ticket.ticketNumber}.` });
+                        // THE CRASH FIX: Added if(socket)
+                        if (socket) socket.emit('jobPaused', { profileName: profile.profileName, reason: `Paused: Verification failed for #${ticket.ticketNumber}.` });
                     }
                 }
             }
 
             if (socket) {
                 socket.emit(resultEventName, { 
-                    ticketNumber: ticket.ticketNumber, success: false, details: failure ? `Verification Failed: ${failure.reason}` : 'Verification Failed: No automation history found (Timeout 25s).', fullResponse, profileName: profile.profileName, email: email 
+                    ticketNumber: ticket.ticketNumber, success: false, details: failMessage, fullResponse, profileName: profile.profileName, email: email 
                 });
             }
-            return { success: false };
+            return { success: false, details: failMessage };
         }
     } catch (error) {
         const { message, fullResponse: errorResponse } = parseError(error);
@@ -345,7 +327,8 @@ const verifyTicketEmail = async (socket, { ticket, profile, resultEventName = 't
              if (activeJobs[jobId].stopAfterFailures > 0 && activeJobs[jobId].consecutiveFailures >= activeJobs[jobId].stopAfterFailures) {
                 if (activeJobs[jobId].status !== 'paused') {
                     activeJobs[jobId].status = 'paused';
-                    socket.emit('jobPaused', { profileName: profile.profileName, reason: `Paused: Verification Error.` });
+                    // THE CRASH FIX: Added if(socket)
+                    if (socket) socket.emit('jobPaused', { profileName: profile.profileName, reason: `Paused: Verification Error.` });
                 }
             }
         }
@@ -353,7 +336,7 @@ const verifyTicketEmail = async (socket, { ticket, profile, resultEventName = 't
         if (socket) {
              socket.emit(resultEventName, { ticketNumber: ticket.ticketNumber, success: false, details: `Verification Error: ${message}`, fullResponse, profileName: profile.profileName, email: email });
         }
-        return { success: false };
+        return { success: false, details: message };
     }
 };
 
@@ -396,7 +379,6 @@ const handleClearEmailFailures = async (socket, data) => {
     }
 };
 
-// 🚨 FIX: Added departmentId to the API URLs
 const handleGetMailReplyAddressDetails = async (socket, data) => {
     try {
         const profiles = readProfiles();
@@ -473,5 +455,5 @@ const handleGetDeskMailAddresses = async (socket, data) => {
 };
 
 module.exports = {
-    setActiveJobs, handleSendTestTicket, handleStartBulkCreate, handleGetEmailFailures, handleClearEmailFailures, handleGetMailReplyAddressDetails, handleUpdateMailReplyAddressDetails, handleSendSingleTicket, handleVerifyTicketEmail, handleGetDeskOrganizations, handleGetDeskDepartments, handleGetDeskMailAddresses
+    setActiveJobs, getActiveJobs, handleSendTestTicket, handleStartBulkCreate, handleGetEmailFailures, handleClearEmailFailures, handleGetMailReplyAddressDetails, handleUpdateMailReplyAddressDetails, handleSendSingleTicket, handleVerifyTicketEmail, handleGetDeskOrganizations, handleGetDeskDepartments, handleGetDeskMailAddresses, processSingleTicketJob
 };

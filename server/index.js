@@ -21,6 +21,9 @@ const bookingsHandler = require('./bookings-handler');
 const ORDER_FILE = path.join(__dirname, "sidebar-order.json");
 require('dotenv').config();
 
+const { ticketQueueEvents, ticketQueue } = require('./queue');
+require('./worker'); // Starts the background factory worker
+
 const WORKER_URL = "https://zoho-ops-logger.arfilm47.workers.dev"; 
 const PORT = process.env.PORT || 3000;
 
@@ -321,22 +324,56 @@ app.delete('/api/profiles/:profileNameToDelete', (req, res) => {
     }
 });
 
+// ==========================================
+// 🚨 THE JSON FIX: REDIS WALKIE-TALKIE
+// ==========================================
+ticketQueueEvents.on('completed', async ({ jobId, returnvalue }) => {
+    if (!returnvalue) return;
+    
+    let parsedResult;
+    try { 
+        parsedResult = typeof returnvalue === 'string' ? JSON.parse(returnvalue) : returnvalue; 
+    } catch (e) { 
+        parsedResult = returnvalue; 
+    }
+
+    if (parsedResult && parsedResult.success) {
+        io.emit('ticketResult', parsedResult);
+    } else if (parsedResult && parsedResult.ignored) {
+        // Do nothing if it was cancelled
+    }
+    
+    const waiting = await ticketQueue.getWaitingCount();
+    const active = await ticketQueue.getActiveCount();
+    if (waiting === 0 && active === 0 && parsedResult && parsedResult.profileName) {
+        io.emit('bulkComplete', { profileName: parsedResult.profileName, jobType: 'ticket' });
+    }
+});
+
+ticketQueueEvents.on('failed', async ({ jobId, failedReason }) => {
+    try {
+        const errorData = JSON.parse(failedReason);
+        io.emit('ticketResult', errorData);
+
+        const waiting = await ticketQueue.getWaitingCount();
+        const active = await ticketQueue.getActiveCount();
+        if (waiting === 0 && active === 0 && errorData.profileName) {
+            io.emit('bulkComplete', { profileName: errorData.profileName, jobType: 'ticket' });
+        }
+    } catch(e) { }
+});
+
+
 // --- SOCKET.IO CONNECTION HANDLING ---
 io.on('connection', (socket) => {
     console.log(`[INFO] New connection. Socket ID: ${socket.id}`);
 
-    // ==========================================
-    // 🚨 THE RELOAD FIX: THE "LIVE SOCKET" WRAPPER
-    // ==========================================
     const liveSocket = {
         id: socket.id,
         emit: (eventName, data) => io.emit(eventName, data),
         connected: true
     };
 
-    // ==========================================
-    // 🚨 HELPER: Find job even if Socket ID changes
-    // ==========================================
     const findJobKey = (profileName, jobType) => {
         const suffix = `_${profileName}_${jobType}`;
         return Object.keys(activeJobs).find(k => k.endsWith(suffix) || k === `${profileName}_${jobType}`);
@@ -346,7 +383,6 @@ io.on('connection', (socket) => {
         socket.emit('activeJobsSync', Object.keys(activeJobs));
     });
 
-    // Dynamic API status check
     socket.on('checkApiStatus', async (data) => {
         try {
             const { selectedProfileName, service = 'desk' } = data;
@@ -401,9 +437,6 @@ io.on('connection', (socket) => {
         }
     });
 
-    // ==========================================
-    // 🚨 FIX: Job control handlers using findJobKey
-    // ==========================================
     socket.on('pauseJob', ({ profileName, jobType }) => {
         const jobId = findJobKey(profileName, jobType);
         if (jobId && activeJobs[jobId]) activeJobs[jobId].status = 'paused';
@@ -415,7 +448,7 @@ io.on('connection', (socket) => {
             activeJobs[jobId].status = 'running';
             activeJobs[jobId].consecutiveFailures = 0; 
         } else {
-            socket.emit('bulkError', { profileName, jobType, message: "Job session lost (likely due to a page refresh). Please clear your completed items from the list and click 'Start Bulk Import' again to continue." });
+            socket.emit('bulkError', { profileName, jobType, message: "Job session lost. Please clear your completed items and click Start again to continue." });
             socket.emit('bulkEnded', { profileName, jobType });
         }
     });
@@ -429,7 +462,6 @@ io.on('connection', (socket) => {
         console.log(`[INFO] Socket disconnected: ${socket.id}. Jobs will remain active in background.`);
     });
 
-    // --- AUTO-FETCH API HANDLERS (Unauthenticated profiles allowed) ---
     socket.on('getDeskOrganizations', (data) => deskHandler.handleGetDeskOrganizations(liveSocket, data));
     socket.on('getDeskDepartments', (data) => deskHandler.handleGetDeskDepartments(liveSocket, data));
     socket.on('getDeskMailAddresses', (data) => deskHandler.handleGetDeskMailAddresses(liveSocket, data));
@@ -437,7 +469,6 @@ io.on('connection', (socket) => {
     socket.on('getQntrlOrganizations', (data) => qntrlHandler.handleGetQntrlOrganizations(liveSocket, data));
     socket.on('getPeopleOrganizations', (data) => peopleHandler.handleGetPeopleOrganizations(liveSocket, data));
 
-    // --- Service-specific Listeners ---
     socket.on('deleteBookingService', (data) => {
         const profiles = readProfiles();
         const activeProfile = data ? profiles.find(p => p.profileName === data.selectedProfileName) : null;
@@ -536,7 +567,6 @@ io.on('connection', (socket) => {
     });
 });
 
-// --- SIDEBAR PERSISTENCE ROUTE ---
 const fsPromises = require('fs').promises;
 
 app.get("/api/sidebar-order", async (req, res) => {
@@ -557,26 +587,15 @@ app.post("/api/sidebar-order", express.json(), async (req, res) => {
     }
 });
 
-// ==========================================
-// 🚀 DYNAMIC MULTI-ACCOUNT SPEED TEST (WITH RESET)
-// ==========================================
 let speedTestInterval = null;
 
 app.get('/api/test-speed', (req, res) => {
-    // If a test is already running, clear it before starting a new one
     if (speedTestInterval) clearInterval(speedTestInterval);
 
     const totalTickets = parseInt(req.query.total) || 5000;
     const batchSize = parseInt(req.query.batch) || 100;
     const numProfiles = parseInt(req.query.profiles) || 1;
 
-    console.log("\n=========================================");
-    console.log(`🚀 STARTING STRESS TEST...`);
-    console.log(`🎯 Total Tickets: ${totalTickets}`);
-    console.log(`⚡ Speed: ${batchSize} tickets every 100ms`);
-    console.log(`👥 Concurrent Profiles: ${numProfiles}`);
-    console.log("=========================================\n");
-    
     let count = 0;
     
     speedTestInterval = setInterval(() => {
@@ -589,7 +608,6 @@ app.get('/api/test-speed', (req, res) => {
                 for(let p = 1; p <= numProfiles; p++){
                     io.emit('bulkComplete', { profileName: `TestProfile_${p}`, jobType: 'ticket' });
                 }
-                console.log("\n✅ SPEED TEST FINISHED!\n");
                 return;
             }
 
@@ -605,10 +623,6 @@ app.get('/api/test-speed', (req, res) => {
             });
         }
 
-        const memory = process.memoryUsage();
-        const activeRamMB = (memory.heapUsed / 1024 / 1024).toFixed(2);
-        console.log(`[PROGRESS] Sent ${count} / ${totalTickets} | 🧠 Active RAM: ${activeRamMB} MB`);
-
     }, 100); 
 
     res.json({ success: true, message: "Speed test initialized!" });
@@ -618,7 +632,6 @@ app.get('/api/test-stop', (req, res) => {
     if (speedTestInterval) {
         clearInterval(speedTestInterval);
         speedTestInterval = null;
-        console.log("\n🛑 SPEED TEST FORCE STOPPED BY USER!\n");
     }
     res.json({ success: true, message: "Test stopped" });
 });

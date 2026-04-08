@@ -1,4 +1,10 @@
 // --- FILE: apps/ops/server/utils.js ---
+const http = require('http');
+const https = require('https');
+
+// The "Carpool" - reuses network ports so Windows doesn't freeze
+const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 100 });
+const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 100 });
 
 const fs = require('fs');
 const path = require('path');
@@ -220,7 +226,15 @@ const makeApiCall = async (method, relativeUrl, data, profile, service, queryPar
         headers['Content-Type'] = 'multipart/form-data'; 
     }
 
-    const axiosConfig = { method, url: fullUrl, data: requestData, headers, params: queryParams };
+    const axiosConfig = { 
+        method, 
+        url: fullUrl, 
+        data: requestData, 
+        headers, 
+        params: queryParams,
+        httpAgent,     // <-- Added Carpool
+        httpsAgent     // <-- Added Carpool
+    };
     
     const isWriteAction = ['POST', 'PUT', 'DELETE', 'PATCH'].includes(method.toUpperCase());
     
