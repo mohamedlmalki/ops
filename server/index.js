@@ -557,6 +557,72 @@ app.post("/api/sidebar-order", express.json(), async (req, res) => {
     }
 });
 
+// ==========================================
+// 🚀 DYNAMIC MULTI-ACCOUNT SPEED TEST (WITH RESET)
+// ==========================================
+let speedTestInterval = null;
+
+app.get('/api/test-speed', (req, res) => {
+    // If a test is already running, clear it before starting a new one
+    if (speedTestInterval) clearInterval(speedTestInterval);
+
+    const totalTickets = parseInt(req.query.total) || 5000;
+    const batchSize = parseInt(req.query.batch) || 100;
+    const numProfiles = parseInt(req.query.profiles) || 1;
+
+    console.log("\n=========================================");
+    console.log(`🚀 STARTING STRESS TEST...`);
+    console.log(`🎯 Total Tickets: ${totalTickets}`);
+    console.log(`⚡ Speed: ${batchSize} tickets every 100ms`);
+    console.log(`👥 Concurrent Profiles: ${numProfiles}`);
+    console.log("=========================================\n");
+    
+    let count = 0;
+    
+    speedTestInterval = setInterval(() => {
+        for (let i = 0; i < batchSize; i++) {
+            count++;
+            
+            if (count > totalTickets) {
+                clearInterval(speedTestInterval);
+                speedTestInterval = null;
+                for(let p = 1; p <= numProfiles; p++){
+                    io.emit('bulkComplete', { profileName: `TestProfile_${p}`, jobType: 'ticket' });
+                }
+                console.log("\n✅ SPEED TEST FINISHED!\n");
+                return;
+            }
+
+            const profileIndex = (count % numProfiles) + 1;
+            const profileName = `TestProfile_${profileIndex}`;
+
+            io.emit('ticketResult', {
+                profileName: profileName,
+                email: `fake_user_${count}@test.com`,
+                success: true,
+                ticketNumber: `TEST-${count}`,
+                details: `Processed instantly`,
+            });
+        }
+
+        const memory = process.memoryUsage();
+        const activeRamMB = (memory.heapUsed / 1024 / 1024).toFixed(2);
+        console.log(`[PROGRESS] Sent ${count} / ${totalTickets} | 🧠 Active RAM: ${activeRamMB} MB`);
+
+    }, 100); 
+
+    res.json({ success: true, message: "Speed test initialized!" });
+});
+
+app.get('/api/test-stop', (req, res) => {
+    if (speedTestInterval) {
+        clearInterval(speedTestInterval);
+        speedTestInterval = null;
+        console.log("\n🛑 SPEED TEST FORCE STOPPED BY USER!\n");
+    }
+    res.json({ success: true, message: "Test stopped" });
+});
+
 server.listen(PORT, () => {
     console.log(`🚀 Server is running on http://localhost:${PORT}`);
     

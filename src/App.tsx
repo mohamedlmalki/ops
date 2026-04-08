@@ -28,6 +28,7 @@ import { DashboardLayout } from '@/components/dashboard/DashboardLayout';
 import BulkContactsFsm from './pages/BulkContactsFsm';
 import BulkBookings from './pages/BulkBookings';
 import AppointmentManager from './pages/AppointmentManager';
+import SpeedTest from './pages/SpeedTest';
 
 const queryClient = new QueryClient();
 const SERVER_URL = "http://localhost:3000";
@@ -422,235 +423,53 @@ export interface BookingJobs { [profileName: string]: BookingJobState; }
 
 const createInitialJobState = (): JobState => ({
   formData: {
-    emails: '',
-    subject: '',
-    description: '',
-    delay: 1,
-    sendDirectReply: false,
-    verifyEmail: false,
-    displayName: '',
-    stopAfterFailures: 4,
-    enableTracking: false,
+    emails: '', subject: '', description: '', delay: 1, sendDirectReply: false, verifyEmail: false, displayName: '', stopAfterFailures: 4, enableTracking: false,
   },
-  results: [],
-  isProcessing: false,
-  isPaused: false,
-  isComplete: false,
-  processingStartTime: null,
-  processingTime: 0,
-  totalTicketsToProcess: 0,
-  countdown: 0,
-  currentDelay: 1,
-  filterText: '',
+  results: [], isProcessing: false, isPaused: false, isComplete: false, processingStartTime: null, processingTime: 0, totalTicketsToProcess: 0, countdown: 0, currentDelay: 1, filterText: '',
 });
 const createInitialInvoiceJobState = (): InvoiceJobState => ({
-    formData: {
-        emails: '',
-        subject: '',
-        body: '',
-        delay: 1,
-        displayName: '',
-        sendCustomEmail: false,
-        sendDefaultEmail: false,
-    },
-    results: [],
-    isProcessing: false,
-    isPaused: false,
-    isComplete: false,
-    processingStartTime: null,
-    processingTime: 0,
-    totalToProcess: 0,
-    countdown: 0,
-    currentDelay: 1,
-    filterText: '',
+    formData: { emails: '', subject: '', body: '', delay: 1, displayName: '', sendCustomEmail: false, sendDefaultEmail: false, },
+    results: [], isProcessing: false, isPaused: false, isComplete: false, processingStartTime: null, processingTime: 0, totalToProcess: 0, countdown: 0, currentDelay: 1, filterText: '',
 });
 const createInitialCatalystJobState = (): CatalystJobState => ({
-    formData: {
-        emails: '',
-        firstName: '',
-        lastName: '',
-        delay: 1,
-    },
-    results: [],
-    isProcessing: false,
-    isPaused: false,
-    isComplete: false,
-    processingStartTime: null,
-    processingTime: 0,
-    totalToProcess: 0,
-    countdown: 0,
-    currentDelay: 1,
-    filterText: '',
+    formData: { emails: '', firstName: '', lastName: '', delay: 1, },
+    results: [], isProcessing: false, isPaused: false, isComplete: false, processingStartTime: null, processingTime: 0, totalToProcess: 0, countdown: 0, currentDelay: 1, filterText: '',
 });
 const createInitialEmailJobState = (): EmailJobState => ({
-    formData: {
-        emails: '',
-        subject: '',
-        content: '',
-        delay: 1,
-        displayName: '', 
-    },
-    results: [],
-    isProcessing: false,
-    isPaused: false,
-    isComplete: false,
-    processingStartTime: null,
-    processingTime: 0,
-    totalToProcess: 0,
-    countdown: 0,
-    currentDelay: 1,
-    filterText: '',
+    formData: { emails: '', subject: '', content: '', delay: 1, displayName: '', },
+    results: [], isProcessing: false, isPaused: false, isComplete: false, processingStartTime: null, processingTime: 0, totalToProcess: 0, countdown: 0, currentDelay: 1, filterText: '',
 });
 const createInitialQntrlJobState = (): QntrlJobState => ({
-    formData: {
-        selectedFormId: "",
-        bulkPrimaryField: "",
-        bulkPrimaryValues: "",
-        bulkDefaultData: {},
-        bulkDelay: 1,
-    },
-    results: [],
-    isProcessing: false,
-    isPaused: false,
-    isComplete: false,
-    processingStartTime: null,
-    processingTime: 0,
-    totalToProcess: 0,
-    countdown: 0,
-    currentDelay: 1,
-    filterText: '',
+    formData: { selectedFormId: "", bulkPrimaryField: "", bulkPrimaryValues: "", bulkDefaultData: {}, bulkDelay: 1, },
+    results: [], isProcessing: false, isPaused: false, isComplete: false, processingStartTime: null, processingTime: 0, totalToProcess: 0, countdown: 0, currentDelay: 1, filterText: '',
 });
 const createInitialPeopleJobState = (): PeopleJobState => ({
-    formData: {
-        selectedFormId: "",
-        bulkPrimaryField: "",
-        bulkPrimaryValues: "",
-        bulkDefaultData: {},
-        bulkDelay: 1,
-        stopAfterFailures: 4, 
-    },
-    results: [],
-    isProcessing: false,
-    isPaused: false,
-    isComplete: false,
-    processingStartTime: null,
-    processingTime: 0,
-    totalToProcess: 0,
-    countdown: 0,
-    currentDelay: 1,
-    filterText: '',
+    formData: { selectedFormId: "", bulkPrimaryField: "", bulkPrimaryValues: "", bulkDefaultData: {}, bulkDelay: 1, stopAfterFailures: 4, },
+    results: [], isProcessing: false, isPaused: false, isComplete: false, processingStartTime: null, processingTime: 0, totalToProcess: 0, countdown: 0, currentDelay: 1, filterText: '',
 });
 const createInitialCreatorJobState = (): CreatorJobState => ({
-    formData: {
-        selectedFormLinkName: "",
-        bulkPrimaryField: "",
-        bulkPrimaryValues: "",
-        bulkDefaultData: {},
-        bulkDelay: 1,
-    },
-    results: [],
-    isProcessing: false,
-    isPaused: false,
-    isComplete: false,
-    processingStartTime: null,
-    processingTime: 0,
-    totalToProcess: 0,
-    countdown: 0,
-    currentDelay: 1,
-    filterText: '',
+    formData: { selectedFormLinkName: "", bulkPrimaryField: "", bulkPrimaryValues: "", bulkDefaultData: {}, bulkDelay: 1, },
+    results: [], isProcessing: false, isPaused: false, isComplete: false, processingStartTime: null, processingTime: 0, totalToProcess: 0, countdown: 0, currentDelay: 1, filterText: '',
 });
 const createInitialProjectsJobState = (): ProjectsJobState => ({
-    formData: {
-        taskName: '',
-        primaryField: 'name',
-        primaryValues: '',
-        taskDescription: '',
-        projectId: '',
-        tasklistId: '',
-        delay: 1,
-        bulkDefaultData: {},
-        emails: '', 
-    },
-    results: [],
-    isProcessing: false,
-    isPaused: false,
-    isComplete: false,
-    processingStartTime: null,
-    processingTime: 0,
-    totalToProcess: 0,
-    countdown: 0,
-    currentDelay: 1,
-    filterText: '',
+    formData: { taskName: '', primaryField: 'name', primaryValues: '', taskDescription: '', projectId: '', tasklistId: '', delay: 1, bulkDefaultData: {}, emails: '', },
+    results: [], isProcessing: false, isPaused: false, isComplete: false, processingStartTime: null, processingTime: 0, totalToProcess: 0, countdown: 0, currentDelay: 1, filterText: '',
 });
-
 const createInitialWebinarJobState = (): WebinarJobState => ({
-    formData: {
-        webinarId: '',
-        webinar: null,
-        emails: '',
-        firstName: '',
-        delay: 1,
-        displayName: 'webinar_registrations',
-    },
-    results: [],
-    isProcessing: false,
-    isPaused: false,
-    isComplete: false,
-    processingStartTime: null,
-    processingTime: 0,
-    totalToProcess: 0,
-    countdown: 0,
-    currentDelay: 1,
-    filterText: '',
+    formData: { webinarId: '', webinar: null, emails: '', firstName: '', delay: 1, displayName: 'webinar_registrations', },
+    results: [], isProcessing: false, isPaused: false, isComplete: false, processingStartTime: null, processingTime: 0, totalToProcess: 0, countdown: 0, currentDelay: 1, filterText: '',
 });
-
 const createInitialFsmContactJobState = (): FsmContactJobState => ({
-    formData: {
-        emails: '',
-        lastName: '',
-        delay: 1,
-        stopAfterFailures: 4 
-    },
-    results: [],
-    isProcessing: false,
-    isPaused: false,
-    isComplete: false,
-    processingStartTime: null,
-    processingTime: 0,
-    totalToProcess: 0,
-    countdown: 0,
-    currentDelay: 1,
-    filterText: '',
+    formData: { emails: '', lastName: '', delay: 1, stopAfterFailures: 4 },
+    results: [], isProcessing: false, isPaused: false, isComplete: false, processingStartTime: null, processingTime: 0, totalToProcess: 0, countdown: 0, currentDelay: 1, filterText: '',
 });
-
 const createInitialBookingJobState = (): BookingJobState => ({
-    formData: {
-        emails: '',
-        defName: 'Bulk User',
-        defPhone: '0000000000',
-        serviceId: '',
-        staffId: '',
-        startTimeStr: new Date().toISOString().slice(0, 16),
-        timeGap: 5,
-        workStart: 9,
-        workEnd: 17,
-        delay: 0,
-        stopAfterFailures: 4 
-    },
-    results: [],
-    isProcessing: false,
-    isPaused: false,
-    isComplete: false,
-    processingStartTime: null,
-    processingTime: 0,
-    totalToProcess: 0,
-    countdown: 0,
-    currentDelay: 0,
-    filterText: '',
+    formData: { emails: '', defName: 'Bulk User', defPhone: '0000000000', serviceId: '', staffId: '', startTimeStr: new Date().toISOString().slice(0, 16), timeGap: 5, workStart: 9, workEnd: 17, delay: 0, stopAfterFailures: 4 },
+    results: [], isProcessing: false, isPaused: false, isComplete: false, processingStartTime: null, processingTime: 0, totalToProcess: 0, countdown: 0, currentDelay: 0, filterText: '',
 });
 
 
-// 櫨 THE GOD MODE CACHE HOOK (WITH MEMORY SAVER)
+// 👁️ THE GOD MODE CACHE HOOK (WITH MEMORY SAVER)
 function usePersistentJobs<T>(storageKey: string, initialValue: T) {
     const [state, setState] = useState<T>(() => {
         try {
@@ -662,7 +481,6 @@ function usePersistentJobs<T>(storageKey: string, initialValue: T) {
                     const job = parsed[profile];
                     safeState[profile] = {
                         ...job,
-                        // FIX 1: Do NOT force the job to pause on reload! Let it continue naturally.
                         isProcessing: job.isProcessing, 
                         isPaused: job.isPaused
                     };
@@ -677,16 +495,14 @@ function usePersistentJobs<T>(storageKey: string, initialValue: T) {
 
     useEffect(() => {
         try {
-            // FIX 2: MEMORY SAVER (Prevents "Out of Memory" crashes on 500+ tickets)
             const lightState: any = {};
             for (const profile in state) {
                 const job = (state as any)[profile];
                 lightState[profile] = {
                     ...job,
-                    // Strip out the massive 'fullResponse' JSON from results before saving to browser storage
                     results: job.results ? job.results.map((r: any) => ({
                         ...r,
-                        fullResponse: undefined // Removes the heavy data so the browser stays lightning fast!
+                        fullResponse: undefined 
                     })) : []
                 };
             }
@@ -702,7 +518,7 @@ function usePersistentJobs<T>(storageKey: string, initialValue: T) {
 const MainApp = () => {
     const { toast } = useToast();
     
-    // 櫨 STATE SYSTEM
+    // STATE SYSTEM
     const [jobs, setJobs] = usePersistentJobs<Jobs>('zoho_cache_jobs_ticket', {});
     const [invoiceJobs, setInvoiceJobs] = usePersistentJobs<InvoiceJobs>('zoho_cache_jobs_invoice', {});
     const [catalystJobs, setCatalystJobs] = usePersistentJobs<CatalystJobs>('zoho_cache_jobs_catalyst', {}); 
@@ -733,6 +549,12 @@ const MainApp = () => {
     useJobTimer(fsmContactJobs, setFsmContactJobs, 'fsm-contact');
     useJobTimer(bookingJobs, setBookingJobs, 'bookings');
 
+    // 🚀 NEW: THE "BUCKET" REF FOR BATCHING SOCKET EVENTS
+    const resultBuckets = useRef<any>({
+        ticket: {}, invoice: {}, catalyst: {}, email: {}, qntrl: {}, people: {}, 
+        creator: {}, projects: {}, webinar: {}, fsmContact: {}, bookings: {}
+    });
+
     // ==========================================
     // 👁️ CLOUDFLARE REAL-TIME TRACKING POLLER
     // ==========================================
@@ -741,16 +563,13 @@ const MainApp = () => {
     useEffect(() => {
         const pollTracker = async () => {
             try {
-                // 1. Fetch your saved Profiles from your local Node server
                 const profilesRes = await fetch(`${SERVER_URL}/api/profiles`);
                 const profiles = await profilesRes.json();
 
-                // 2. Extract any Cloudflare URLs you added in the Profile settings
                 const trackingUrls = new Set<string>();
                 profiles.forEach((p: Profile) => {
                     if (p.desk?.cloudflareTrackingUrl) {
                         let baseUrl = p.desk.cloudflareTrackingUrl;
-                        // Auto-format the URL to target the API endpoint
                         if (!baseUrl.endsWith('/api/logs')) {
                             baseUrl = baseUrl.replace(/\/$/, '') + '/api/logs';
                         }
@@ -758,7 +577,6 @@ const MainApp = () => {
                     }
                 });
 
-                // 3. Check every Tracking URL we found
                 for (const url of trackingUrls) {
                     try {
                         const res = await fetch(url);
@@ -767,70 +585,43 @@ const MainApp = () => {
                         if (data.success && data.logs) {
                             data.logs.forEach((log: { email: string, ticketId: string, openedAt: string }) => {
                                 const logId = `${log.email}_${log.openedAt}`;
-                                
                                 if (!lastNotifiedRef.current.has(logId)) {
                                     lastNotifiedRef.current.add(logId); 
-                                    
-                                    // Only alert if opened in the last 2 minutes
-                                    const logTime = new Date(log.openedAt).getTime();
-                                    const now = new Date().getTime();
-                                    
-									
-                                   // if (now - logTime < 120000) {
-                                  //      // 🚨 DELETE OR COMMENT OUT THIS TOAST BLOCK 🚨
-                                  //      toast({
-                                  //          title: "👁️ Email Opened!",
-                                 //           description: `${log.email} just viewed their ticket.`,
-                                  //          className: "bg-emerald-500 text-white border-emerald-600 shadow-lg",
-                                 //       });
-                                  //  }
                                 }
                             });
                         }
-                    } catch (e) {
-                        // Silently ignore if a specific worker URL fails
-                    }
+                    } catch (e) { }
                 }
-            } catch (e) {
-                // Silently ignore if we can't fetch profiles
-            }
+            } catch (e) { }
         };
 
-        // Quietly check every 5 seconds
         const interval = setInterval(pollTracker, 5000);
         return () => clearInterval(interval);
-    }, [toast]);
-    // ==========================================
+    }, []);
 
+    // ==========================================
+    // 🚀 THE MAIN SOCKET & BATCHING ENGINE
+    // ==========================================
     useEffect(() => {
         const socket = io(SERVER_URL);
         socketRef.current = socket;
 
         socket.on('connect', () => {
             toast({ title: "Connected to server!" });
-            
-            // 櫨 FIX: Check server immediately on connection to prevent locked caches!
             socket.emit('requestActiveJobs');
         });
           
-		// ==========================================
-        // 🚨 TAB WAKE-UP FIX: PREVENT BROWSER FREEZING
-        // ==========================================
         const handleWakeUp = () => {
             if (document.visibilityState === 'visible') {
-                // If the browser dropped the connection while asleep, force it back!
                 if (!socket.connected) {
                     console.log("Tab woke up: Forcing Socket Reconnection...");
                     socket.connect();
                 }
-                // Ask the server what jobs are actually still running
                 socket.emit('requestActiveJobs');
             }
         };
         document.addEventListener("visibilitychange", handleWakeUp);
-        // ==========================================  
 
-        // 🚨 THE "GHOST ID" FIX: Allow flexible ID matching so the UI doesn't kill the job!
         socket.on('activeJobsSync', (serverActiveJobs: string[]) => {
             const cleanupStuckJobs = (jobsObj: any, setJobsFn: any, jobType: string) => {
                 let hasChanges = false;
@@ -840,17 +631,12 @@ const MainApp = () => {
                     const job = safeState[profile];
                     const expectedJobId = `${profile}_${jobType}`;
                     
-                    // THE MAGIC FIX: Check if ANY server job ENDS with our expected ID!
                     const isJobActuallyRunning = serverActiveJobs.some(id => 
                         id === expectedJobId || id.endsWith(`_${expectedJobId}`)
                     );
 
                     if ((job.isProcessing || job.isPaused) && !isJobActuallyRunning) {
-                        safeState[profile] = {
-                            ...job,
-                            isProcessing: false,
-                            isPaused: false,
-                        };
+                        safeState[profile] = { ...job, isProcessing: false, isPaused: false };
                         hasChanges = true;
                     }
                 }
@@ -870,22 +656,107 @@ const MainApp = () => {
             cleanupStuckJobs(bookingJobs, setBookingJobs, 'bookings');
         });
         
-        socket.on('ticketResult', (result: TicketResult & { profileName: string }) => {
-          setJobs(prevJobs => {
-            const profileJob = prevJobs[result.profileName] || createInitialJobState();
-            const isLastTicket = profileJob.results.length + 1 >= profileJob.totalTicketsToProcess;
-            const resultWithTime = { ...result, timestamp: new Date() };
-
-            return {
-              ...prevJobs,
-              [result.profileName]: {
-                ...profileJob,
-                results: [...profileJob.results, resultWithTime], 
-                countdown: isLastTicket ? 0 : profileJob.formData.delay, // <-- FIXED
-              }
-            };
-          });
+        // 🚀 BUCKET FILLERS: These just quietly save data in the background
+        socket.on('ticketResult', (result: any) => {
+            if (!resultBuckets.current.ticket[result.profileName]) resultBuckets.current.ticket[result.profileName] = [];
+            resultBuckets.current.ticket[result.profileName].push({ ...result, timestamp: new Date() });
         });
+        socket.on('invoiceResult', (result: any) => {
+            if (!resultBuckets.current.invoice[result.profileName]) resultBuckets.current.invoice[result.profileName] = [];
+            resultBuckets.current.invoice[result.profileName].push(result);
+        });
+        socket.on('catalystResult', (result: any) => {
+            if (!resultBuckets.current.catalyst[result.profileName]) resultBuckets.current.catalyst[result.profileName] = [];
+            resultBuckets.current.catalyst[result.profileName].push(result);
+        });
+        socket.on('emailResult', (result: any) => {
+            if (!resultBuckets.current.email[result.profileName]) resultBuckets.current.email[result.profileName] = [];
+            resultBuckets.current.email[result.profileName].push(result);
+        });
+        socket.on('qntrlResult', (result: any) => {
+            if (!resultBuckets.current.qntrl[result.profileName]) resultBuckets.current.qntrl[result.profileName] = [];
+            resultBuckets.current.qntrl[result.profileName].push({ ...result, timestamp: new Date() });
+        });
+        socket.on('peopleResult', (result: any) => {
+            if (!resultBuckets.current.people[result.profileName]) resultBuckets.current.people[result.profileName] = [];
+            resultBuckets.current.people[result.profileName].push({ ...result, timestamp: new Date() });
+        });
+        socket.on('creatorResult', (result: any) => {
+            if (!resultBuckets.current.creator[result.profileName]) resultBuckets.current.creator[result.profileName] = [];
+            resultBuckets.current.creator[result.profileName].push({ ...result, timestamp: new Date() });
+        });
+        socket.on('projectsResult', (result: any) => {
+            if (!resultBuckets.current.projects[result.profileName]) resultBuckets.current.projects[result.profileName] = [];
+            resultBuckets.current.projects[result.profileName].push({ ...result, timestamp: new Date() });
+        });
+        socket.on('webinarResult', (result: any) => {
+            if (!resultBuckets.current.webinar[result.profileName]) resultBuckets.current.webinar[result.profileName] = [];
+            resultBuckets.current.webinar[result.profileName].push(result);
+        });
+        socket.on('fsmContactResult', (result: any) => {
+            if (!resultBuckets.current.fsmContact[result.profileName]) resultBuckets.current.fsmContact[result.profileName] = [];
+            resultBuckets.current.fsmContact[result.profileName].push({ ...result, timestamp: new Date() });
+        });
+        socket.on('bookingResult', (result: any) => {
+            if (!resultBuckets.current.bookings[result.profileName]) resultBuckets.current.bookings[result.profileName] = [];
+            resultBuckets.current.bookings[result.profileName].push({ ...result, timestamp: new Date() });
+        });
+
+        // 🚀 THE BATCH PROCESSOR: Updates React only once per second!
+        const flushInterval = setInterval(() => {
+            const flushJobs = (bucketObj: any, setFunc: any, initialBuilder: any, reverseOrder = false) => {
+                let hasDataToFlush = false;
+                for (const profile in bucketObj) { if (bucketObj[profile].length > 0) hasDataToFlush = true; }
+
+                if (hasDataToFlush) {
+                    setFunc((prevJobs: any) => {
+                        const nextJobs = { ...prevJobs };
+                        for (const profile in bucketObj) {
+                            const newItems = bucketObj[profile];
+                            if (newItems.length > 0) {
+                                const profileJob = nextJobs[profile] || initialBuilder();
+                                
+                                let updatedResults = [];
+                                if (reverseOrder) {
+                                    const mappedNewItems = newItems.map((r: any, idx: number) => ({ ...r, number: profileJob.results.length + newItems.length - idx }));
+                                    updatedResults = [...mappedNewItems.reverse(), ...profileJob.results];
+                                } else {
+                                    updatedResults = [...profileJob.results, ...newItems];
+                                }
+
+                                const totalTarget = profileJob.totalTicketsToProcess || profileJob.totalToProcess || 0;
+                                const isLast = updatedResults.length >= totalTarget && totalTarget > 0;
+                                const defaultDelay = profileJob.formData?.delay || profileJob.formData?.bulkDelay || 1;
+
+                                nextJobs[profile] = {
+                                    ...profileJob,
+                                    results: updatedResults,
+                                    countdown: isLast ? 0 : defaultDelay,
+                                };
+                                bucketObj[profile] = []; // Empty the bucket
+                            }
+                        }
+                        return nextJobs;
+                    });
+                }
+            };
+
+            flushJobs(resultBuckets.current.ticket, setJobs, createInitialJobState);
+            flushJobs(resultBuckets.current.invoice, setInvoiceJobs, createInitialInvoiceJobState);
+            flushJobs(resultBuckets.current.catalyst, setCatalystJobs, createInitialCatalystJobState);
+            flushJobs(resultBuckets.current.email, setEmailJobs, createInitialEmailJobState);
+            flushJobs(resultBuckets.current.qntrl, setQntrlJobs, createInitialQntrlJobState);
+            flushJobs(resultBuckets.current.people, setPeopleJobs, createInitialPeopleJobState);
+            flushJobs(resultBuckets.current.creator, setCreatorJobs, createInitialCreatorJobState);
+            flushJobs(resultBuckets.current.projects, setProjectsJobs, createInitialProjectsJobState);
+            flushJobs(resultBuckets.current.webinar, setWebinarJobs, createInitialWebinarJobState, true);
+            flushJobs(resultBuckets.current.fsmContact, setFsmContactJobs, createInitialFsmContactJobState);
+            flushJobs(resultBuckets.current.bookings, setBookingJobs, createInitialBookingJobState);
+
+        }, 1000); // 1000ms = updates UI exactly 1 time per second
+
+
+        // Standard immediate updates (Not batched because they are rare/important)
         socket.on('ticketUpdate', (updateData) => {
           setJobs(prevJobs => {
             if (!prevJobs[updateData.profileName]) return prevJobs;
@@ -905,7 +776,6 @@ const MainApp = () => {
 
         socket.on('jobPaused', (data: { profileName: string, reason: string, jobType?: string }) => {
             const type = data.jobType || 'ticket'; 
-            
             const pauseUpdater = (prev: any) => {
                 if (!prev[data.profileName]) return prev;
                 return { ...prev, [data.profileName]: { ...prev[data.profileName], isPaused: true } };
@@ -923,165 +793,11 @@ const MainApp = () => {
             else if (type === 'fsm-contact') setFsmContactJobs(pauseUpdater);
             else if (type === 'bookings') setBookingJobs(pauseUpdater);
 
-            toast({ 
-                title: "Job Paused Automatically", 
-                description: data.reason, 
-                variant: "destructive" 
-            });
+            toast({ title: "Job Paused Automatically", description: data.reason, variant: "destructive" });
         });
 
-        socket.on('invoiceResult', (result: InvoiceResult & { profileName: string }) => {
-            setInvoiceJobs(prevJobs => {
-                const profileJob = prevJobs[result.profileName] || createInitialInvoiceJobState();
-                const newResults = [...profileJob.results, result];
-                const isLast = newResults.length >= profileJob.totalToProcess;
-                return {
-                    ...prevJobs,
-                    [result.profileName]: {
-                        ...profileJob,
-                        results: newResults,
-                        countdown: isLast ? 0 : profileJob.formData.delay, // <-- FIXED
-                    }
-                };
-            });
-        });
-        socket.on('catalystResult', (result: CatalystResult & { profileName: string }) => {
-          setCatalystJobs(prevJobs => {
-            const profileJob = prevJobs[result.profileName] || createInitialCatalystJobState();
-            const isLast = profileJob.results.length + 1 >= profileJob.totalToProcess;
-            return {
-              ...prevJobs,
-              [result.profileName]: {
-                ...profileJob,
-                results: [...profileJob.results, result],
-                countdown: isLast ? 0 : profileJob.formData.delay, // <-- FIXED
-              }
-            };
-          });
-        });
-        socket.on('emailResult', (result: EmailResult & { profileName: string }) => {
-          setEmailJobs(prevJobs => {
-            const profileJob = prevJobs[result.profileName] || createInitialEmailJobState();
-            const isLast = profileJob.results.length + 1 >= profileJob.totalToProcess;
-            return {
-              ...prevJobs,
-              [result.profileName]: {
-                ...profileJob,
-                results: [...profileJob.results, result],
-                countdown: isLast ? 0 : profileJob.formData.delay, // <-- FIXED
-              }
-            };
-          });
-        });
-        socket.on('qntrlResult', (result: QntrlResult & { profileName: string }) => {
-          setQntrlJobs(prevJobs => {
-            const profileJob = prevJobs[result.profileName] || createInitialQntrlJobState();
-            const isLast = profileJob.results.length + 1 >= profileJob.totalToProcess;
-            const resultWithTime = { ...result, timestamp: new Date() };
-            return {
-              ...prevJobs,
-              [result.profileName]: {
-                ...profileJob,
-                results: [...profileJob.results, resultWithTime],
-                countdown: isLast ? 0 : profileJob.formData.bulkDelay, // <-- FIXED
-              }
-            };
-          });
-        });
-        socket.on('peopleResult', (result: PeopleResult & { profileName: string }) => {
-          setPeopleJobs(prevJobs => {
-            const profileJob = prevJobs[result.profileName] || createInitialPeopleJobState();
-            const isLast = profileJob.results.length + 1 >= profileJob.totalToProcess;
-            const resultWithTime = { ...result, timestamp: new Date() };
-            return {
-              ...prevJobs,
-              [result.profileName]: {
-                ...profileJob,
-                results: [...profileJob.results, resultWithTime], 
-                countdown: isLast ? 0 : profileJob.formData.bulkDelay, // <-- FIXED
-              }
-            };
-          });
-        });
-        socket.on('creatorResult', (result: CreatorResult & { profileName: string }) => {
-          setCreatorJobs(prevJobs => {
-            const profileJob = prevJobs[result.profileName] || createInitialCreatorJobState();
-            const isLast = profileJob.results.length + 1 >= profileJob.totalToProcess;
-            const resultWithTime = { ...result, timestamp: new Date() };
-            return {
-              ...prevJobs,
-              [result.profileName]: {
-                ...profileJob,
-                results: [...profileJob.results, resultWithTime],
-                countdown: isLast ? 0 : profileJob.formData.bulkDelay, // <-- FIXED
-              }
-            };
-          });
-        });
-        socket.on('projectsResult', (result: ProjectsResult & { profileName: string }) => {
-          setProjectsJobs(prevJobs => {
-            const profileJob = prevJobs[result.profileName] || createInitialProjectsJobState();
-            const newResults = [...profileJob.results, { ...result, timestamp: new Date() }];
-            const isLast = newResults.length >= profileJob.totalToProcess;
-            return {
-              ...prevJobs,
-              [result.profileName]: {
-                ...profileJob,
-                results: newResults,
-                countdown: isLast ? 0 : profileJob.formData.delay, // <-- FIXED
-              }
-            };
-          });
-        });
-        socket.on('webinarResult', (result: WebinarResult & { profileName: string }) => {
-          setWebinarJobs(prevJobs => {
-            const profileJob = prevJobs[result.profileName] || createInitialWebinarJobState();
-            const newResult = { ...result, number: profileJob.results.length + 1 };
-            const newResults = [newResult, ...profileJob.results]; 
-            const isLast = newResults.length >= profileJob.totalToProcess;
-            return {
-              ...prevJobs,
-              [result.profileName]: {
-                ...profileJob,
-                results: newResults,
-                countdown: isLast ? 0 : profileJob.formData.delay, // <-- FIXED
-              }
-            };
-          });
-        });
-        socket.on('fsmContactResult', (result: FsmContactResult & { profileName: string }) => {
-            setFsmContactJobs(prevJobs => {
-                const profileJob = prevJobs[result.profileName] || createInitialFsmContactJobState();
-                const isLast = profileJob.results.length + 1 >= profileJob.totalToProcess;
-                return {
-                    ...prevJobs,
-                    [result.profileName]: {
-                        ...profileJob,
-                        results: [...profileJob.results, { ...result, timestamp: new Date() }],
-                        countdown: isLast ? 0 : profileJob.formData.delay, // <-- FIXED
-                    }
-                };
-            });
-        });
-        socket.on('bookingResult', (result: BookingResult & { profileName: string }) => {
-            setBookingJobs(prevJobs => {
-                const profileJob = prevJobs[result.profileName] || createInitialBookingJobState();
-                const isLast = profileJob.results.length + 1 >= profileJob.totalToProcess;
-                return {
-                    ...prevJobs,
-                    [result.profileName]: {
-                        ...profileJob,
-                        results: [...profileJob.results, { ...result, timestamp: new Date() }],
-                        countdown: isLast ? 0 : profileJob.formData.delay, // <-- FIXED
-                    }
-                };
-            });
-        });
-
-
-        const handleJobCompletion = (data: {profileName: string, jobType: 'ticket' | 'invoice' | 'catalyst' | 'email' | 'qntrl' | 'people' | 'creator' | 'projects' | 'webinar' | 'fsm-contact' | 'fsm-invoice' | 'bookings'}, title: string, description: string, variant?: "destructive") => {
+        const handleJobCompletion = (data: any, title: string, description: string, variant?: "destructive") => {
             const { profileName, jobType } = data;
-            
             const getInitialState = (type: string) => {
                 switch(type) {
                     case 'ticket': return createInitialJobState();
@@ -1101,16 +817,7 @@ const MainApp = () => {
 
             const updater = (prev: any) => {
                 const profileJob = prev[profileName] || getInitialState(jobType);
-                return { 
-                    ...prev, 
-                    [profileName]: { 
-                        ...profileJob, 
-                        isProcessing: false, 
-                        isPaused: false, 
-                        isComplete: true, 
-                        countdown: 0 
-                    }
-                };
+                return { ...prev, [profileName]: { ...profileJob, isProcessing: false, isPaused: false, isComplete: true, countdown: 0 } };
             };
 
             if (jobType === 'ticket') setJobs(updater);
@@ -1133,8 +840,8 @@ const MainApp = () => {
         socket.on('bulkError', (data) => handleJobCompletion(data, `Server Error for ${data.profileName}`, data.message, "destructive"));
 
         return () => {
-            // Remove the wake-up listener when the app closes
             document.removeEventListener("visibilitychange", handleWakeUp);
+            clearInterval(flushInterval); // VERY IMPORTANT: Stop the timer when component unmounts
             socket.disconnect();
         };
     }, [toast]);
@@ -1172,9 +879,7 @@ const MainApp = () => {
     };
     const handleDeleteProfile = async (profileNameToDelete: string) => {
         try {
-            const response = await fetch(`${SERVER_URL}/api/profiles/${encodeURIComponent(profileNameToDelete)}`, {
-                method: 'DELETE',
-            });
+            const response = await fetch(`${SERVER_URL}/api/profiles/${encodeURIComponent(profileNameToDelete)}`, { method: 'DELETE' });
             const result = await response.json();
             if (result.success) {
                 toast({ title: `Profile "${profileNameToDelete}" deleted successfully!` });
@@ -1210,12 +915,12 @@ const MainApp = () => {
                             <LiveStats jobs={jobs} invoiceJobs={invoiceJobs} catalystJobs={catalystJobs} emailJobs={emailJobs} qntrlJobs={qntrlJobs} peopleJobs={peopleJobs} creatorJobs={creatorJobs} projectsJobs={projectsJobs} webinarJobs={bookingJobs} bookingJobs={bookingJobs} />
                         </DashboardLayout>
                     } />
+					<Route path="/speed-test" element={<SpeedTest />} />
                     <Route path="*" element={<NotFound />} />
                 </Routes>
             </BrowserRouter>
             <ProfileModal isOpen={isProfileModalOpen} onClose={() => setIsProfileModalOpen(false)} onSave={handleSaveProfile} profile={editingProfile} socket={socketRef.current} />
 
-            {/* 櫨 FIX: Emergency escape hatch button for stuck caches */}
             <button 
                 onClick={() => {
                     if (window.confirm("WARNING: Clear all stuck job caches? (Use if accounts are locked out)")) {
