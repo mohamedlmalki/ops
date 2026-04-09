@@ -1,7 +1,7 @@
 // --- FILE: server/desk-handler.js ---
 const { Queue } = require('bullmq');
 const { connection, hireCashier } = require('./worker');
-const { makeApiCall, parseError, writeToTicketLog, createJobId, readTicketLog, readProfiles } = require('./utils');
+const { makeApiCall, parseError, createJobId, readProfiles } = require('./utils');
 
 let activeJobs = {};
 
@@ -64,7 +64,7 @@ const handleSendSingleTicket = async (data) => {
         const ticketResponse = await makeApiCall('post', '/api/v1/tickets', ticketData, activeProfile, 'desk');
         const newTicket = ticketResponse.data;
         let fullResponseData = { ticketCreate: newTicket };
-        writeToTicketLog({ ticketNumber: newTicket.ticketNumber, email });
+        
 
         if (sendDirectReply) {
             try {
@@ -107,7 +107,7 @@ const handleSendTestTicket = async (socket, data) => {
         const ticketResponse = await makeApiCall('post', '/api/v1/tickets', ticketData, activeProfile, 'desk');
         const newTicket = ticketResponse.data;
         let fullResponseData = { ticketCreate: newTicket };
-        writeToTicketLog({ ticketNumber: newTicket.ticketNumber, email });
+        
 
         if (sendDirectReply) {
             try {
@@ -146,15 +146,15 @@ const handleStartBulkCreate = async (socket, data) => {
         const myAccountQueue = new Queue(queueName, { connection });
         await myAccountQueue.drain(true).catch(() => {});
 
-        // 🚨 NATIVE DELAY RESTORED: BullMQ handles the waiting!
+        const delayMs = Number(delay) * 1000 || 0;
         const jobs = emails.filter(e => e.trim()).map((email, index) => ({
             name: 'createTicket',
-            data: { email, subject, description, selectedProfileName, sendDirectReply, verifyEmail, displayName, enableTracking, deskConfig, activeProfile, jobId },
-            opts: { delay: delay > 0 ? index * (delay * 1000) : 0 } 
+            data: { email, subject, description, selectedProfileName, sendDirectReply, verifyEmail, displayName, enableTracking, deskConfig, activeProfile, jobId, delay },
+            opts: { delay: index * delayMs } 
         }));
 
         await myAccountQueue.addBulk(jobs);
-        console.log(`[QUEUE] 📦 Dropped ${jobs.length} tickets onto ${queueName}'s desk!`);
+        console.log(`[QUEUE] 📦 Dropped ${jobs.length} staggered tickets onto ${queueName}'s desk!`);
 
     } catch (error) {
         socket.emit('bulkError', { message: error.message || 'Error', profileName: selectedProfileName, jobType: 'ticket' });
@@ -172,8 +172,7 @@ const processSingleTicketJob = async (jobData) => {
         const newTicket = ticketResponse.data;
         let successMessage = `Ticket #${newTicket.ticketNumber} created.`;
         let fullResponseData = { ticketCreate: newTicket };
-        
-        writeToTicketLog({ ticketNumber: newTicket.ticketNumber, email });
+
 
         if (sendDirectReply) {
             try {
@@ -249,7 +248,6 @@ const verifyTicketEmail = async (socket, { ticket, profile, resultEventName = 't
 
             const detailsMessage = eventDetails.length > 0 ? `Verified: ${eventDetails.join(' | ')}` : 'Verified: Automation executed.';
 
-            if (jobId && activeJobs[jobId]) activeJobs[jobId].consecutiveFailures = 0;
             if (socket) {
                 socket.emit(resultEventName, { 
                     ticketNumber: ticket.ticketNumber, success: true, details: detailsMessage, fullResponse, profileName: profile.profileName, email: email 
@@ -262,16 +260,6 @@ const verifyTicketEmail = async (socket, { ticket, profile, resultEventName = 't
             fullResponse.verifyEmail.failure = failure || "No specific failure found.";
             const failMessage = failure ? `Verification Failed: ${failure.reason}` : 'Verification Failed: No automation history found.';
 
-            if (jobId && activeJobs[jobId]) {
-                activeJobs[jobId].consecutiveFailures++;
-                if (activeJobs[jobId].stopAfterFailures > 0 && activeJobs[jobId].consecutiveFailures >= activeJobs[jobId].stopAfterFailures) {
-                    if (activeJobs[jobId].status !== 'paused') {
-                        activeJobs[jobId].status = 'paused';
-                        if (socket) socket.emit('jobPaused', { profileName: profile.profileName, reason: `Paused: Verification failed for #${ticket.ticketNumber}.` });
-                    }
-                }
-            }
-
             if (socket) {
                 socket.emit(resultEventName, { 
                     ticketNumber: ticket.ticketNumber, success: false, details: failMessage, fullResponse, profileName: profile.profileName, email: email 
@@ -283,16 +271,6 @@ const verifyTicketEmail = async (socket, { ticket, profile, resultEventName = 't
         const { message, fullResponse: errorResponse } = parseError(error);
         fullResponse.verifyEmail.error = errorResponse;
         
-        if (jobId && activeJobs[jobId]) {
-            activeJobs[jobId].consecutiveFailures++;
-             if (activeJobs[jobId].stopAfterFailures > 0 && activeJobs[jobId].consecutiveFailures >= activeJobs[jobId].stopAfterFailures) {
-                if (activeJobs[jobId].status !== 'paused') {
-                    activeJobs[jobId].status = 'paused';
-                    if (socket) socket.emit('jobPaused', { profileName: profile.profileName, reason: `Paused: Verification Error.` });
-                }
-            }
-        }
-
         if (socket) {
              socket.emit(resultEventName, { ticketNumber: ticket.ticketNumber, success: false, details: `Verification Error: ${message}`, fullResponse, profileName: profile.profileName, email: email });
         }
@@ -311,10 +289,9 @@ const handleGetEmailFailures = async (socket, data) => {
         const response = await makeApiCall('get', `/api/v1/emailFailureAlerts?department=${departmentId}&limit=50`, null, activeProfile, 'desk');
         
         const failures = response.data.data || [];
-        const ticketLog = readTicketLog();
+        
         const failuresWithEmails = failures.map(failure => {
-            const logEntry = ticketLog.find(entry => String(entry.ticketNumber) === String(failure.ticketNumber));
-            return { ...failure, email: logEntry ? logEntry.email : 'Unknown' };
+            return { ...failure, email: 'Unknown (Log Disabled)' };
         });
 
         socket.emit('emailFailuresResult', { success: true, data: failuresWithEmails });

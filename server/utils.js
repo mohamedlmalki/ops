@@ -14,13 +14,10 @@ const FormData = require('form-data');
 const WORKER_URL = "https://zoho-ops-logger.arfilm47.workers.dev"; 
 
 const PROFILES_PATH = path.join(__dirname, 'profiles.json');
-const TICKET_LOG_PATH = path.join(__dirname, 'ticket-log.json');
 const tokenCache = {};
 
 const readProfiles = () => { try { if (fs.existsSync(PROFILES_PATH)) { return JSON.parse(fs.readFileSync(PROFILES_PATH)); } } catch (e) { console.error(e); } return []; };
 const writeProfiles = (profiles) => { try { fs.writeFileSync(PROFILES_PATH, JSON.stringify(profiles, null, 2)); } catch (e) { console.error(e); } };
-const readTicketLog = () => { try { if (fs.existsSync(TICKET_LOG_PATH)) { return JSON.parse(fs.readFileSync(TICKET_LOG_PATH)); } } catch (e) { console.error(e); } return []; };
-const writeToTicketLog = (newEntry) => { const log = readTicketLog(); log.push(newEntry); try { fs.writeFileSync(TICKET_LOG_PATH, JSON.stringify(log, null, 2)); } catch (e) { console.error(e); } return []; };
 
 // 🔥 FIX: Jobs are now tracked by Profile Name, NOT the browser tab ID!
 const createJobId = (socketId, profileName, jobType) => `${profileName}_${jobType}`;
@@ -266,6 +263,6 @@ const makeApiCall = async (method, relativeUrl, data, profile, service, queryPar
 };
 
 module.exports = {
-    readProfiles, writeProfiles, readTicketLog, writeToTicketLog,
+    readProfiles, writeProfiles,
     createJobId, parseError, getValidAccessToken, makeApiCall, logToWorker
 };

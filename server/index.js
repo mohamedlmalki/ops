@@ -22,7 +22,7 @@ const ORDER_FILE = path.join(__dirname, "sidebar-order.json");
 require('dotenv').config();
 
 const { ticketQueueEvents, ticketQueue } = require('./queue');
-require('./worker'); // Starts the background factory worker
+const workerManager = require('./worker'); // Starts the background factory worker and saves it
 
 const WORKER_URL = "https://zoho-ops-logger.arfilm47.workers.dev"; 
 const PORT = process.env.PORT || 3000;
@@ -30,6 +30,10 @@ const PORT = process.env.PORT || 3000;
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "http://localhost:8080" } });
+
+// 👈 THIS PLUGS THE WALKIE TALKIE IN
+workerManager.setSocketIo(io); 
+
 const REDIRECT_URI = `http://localhost:${PORT}/api/zoho/callback`;
 
 // Register active jobs object with all handlers
@@ -453,9 +457,28 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('endJob', ({ profileName, jobType }) => {
+    socket.on('endJob', async ({ profileName, jobType }) => {
         const jobId = findJobKey(profileName, jobType);
-        if (jobId && activeJobs[jobId]) activeJobs[jobId].status = 'ended';
+        if (jobId && activeJobs[jobId]) {
+            activeJobs[jobId].status = 'ended';
+        }
+        
+        console.log(`\n[INFO] 🛑 User clicked End Job for ${profileName}. Stopping factory...`);
+        
+        try {
+            // 1. Instantly wipe the conveyor belt so the worker stops checking tickets
+            const { Queue } = require('bullmq');
+            const { connection } = require('./worker');
+            const queueName = jobType === 'ticket' ? `ticketQueue_${profileName}` : `${jobType}Queue_${profileName}`;
+            const accountQueue = new Queue(queueName, { connection });
+            
+            await accountQueue.drain(true); 
+        } catch(e) {
+            console.error("Error draining queue:", e);
+        }
+        
+        // 2. Tell React to close the table and stop the timer instantly!
+        io.emit('bulkEnded', { profileName, jobType });
     });
 
     socket.on('disconnect', () => {
@@ -476,7 +499,7 @@ io.on('connection', (socket) => {
         else { socket.emit('deleteBookingServiceResult', { success: false, error: "Profile not found." }); }
     });
     
-    const deskListeners = { 'startBulkCreate': deskHandler.handleStartBulkCreate, 'getEmailFailures': deskHandler.handleGetEmailFailures, 'clearEmailFailures': deskHandler.handleClearEmailFailures, 'clearTicketLogs': (socket) => require('./utils').writeToTicketLog([]), 'getMailReplyAddressDetails': deskHandler.handleGetMailReplyAddressDetails, 'updateMailReplyAddressDetails': deskHandler.handleUpdateMailReplyAddressDetails };
+    const deskListeners = { 'startBulkCreate': deskHandler.handleStartBulkCreate, 'getEmailFailures': deskHandler.handleGetEmailFailures, 'clearEmailFailures': deskHandler.handleClearEmailFailures, 'clearTicketLogs': (socket) => {}, 'getMailReplyAddressDetails': deskHandler.handleGetMailReplyAddressDetails, 'updateMailReplyAddressDetails': deskHandler.handleUpdateMailReplyAddressDetails };
     for (const [event, handler] of Object.entries(deskListeners)) { socket.on(event, (data) => { const profiles = readProfiles(); const activeProfile = data ? profiles.find(p => p.profileName === data.selectedProfileName) : null; if (activeProfile) handler(liveSocket, { ...data, activeProfile }); }); }
     
     const catalystListeners = { 'startBulkSignup': catalystHandler.handleStartBulkSignup, 'startBulkEmail': catalystHandler.handleStartBulkEmail, 'getUsers': catalystHandler.handleGetUsers, 'deleteUser': catalystHandler.handleDeleteUser, 'deleteUsers': catalystHandler.handleDeleteUsers };

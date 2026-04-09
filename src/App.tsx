@@ -658,8 +658,23 @@ const MainApp = () => {
         
         // 🚀 BUCKET FILLERS: These just quietly save data in the background
         socket.on('ticketResult', (result: any) => {
+            // 1. Send the data to the batching bucket
             if (!resultBuckets.current.ticket[result.profileName]) resultBuckets.current.ticket[result.profileName] = [];
             resultBuckets.current.ticket[result.profileName].push({ ...result, timestamp: new Date() });
+            
+            // 2. NEW FIX: Force the UI Countdown to start INSTANTLY so it matches the backend log perfectly!
+            setJobs((prevJobs: any) => {
+                if (prevJobs[result.profileName] && prevJobs[result.profileName].formData) {
+                    return {
+                        ...prevJobs,
+                        [result.profileName]: {
+                            ...prevJobs[result.profileName],
+                            countdown: prevJobs[result.profileName].formData.delay || 0
+                        }
+                    };
+                }
+                return prevJobs;
+            });
         });
         socket.on('invoiceResult', (result: any) => {
             if (!resultBuckets.current.invoice[result.profileName]) resultBuckets.current.invoice[result.profileName] = [];
@@ -891,6 +906,47 @@ const MainApp = () => {
             toast({ title: 'Error', description: 'Failed to delete profile.', variant: 'destructive' });
         }
     };
+	
+	// ⏸️ MASTER PAUSE (Pauses all Desk Ticket jobs)
+    const handlePauseAll = () => {
+        if (!socketRef.current) return;
+        Object.keys(jobs).forEach(profileName => {
+            const job = jobs[profileName];
+            if (job.isProcessing && !job.isPaused) {
+                socketRef.current?.emit('pauseJob', { profileName, jobType: 'ticket' });
+                setJobs((prev: any) => ({ ...prev, [profileName]: { ...prev[profileName], isPaused: true } }));
+            }
+        });
+        toast({ title: "Master Pause Triggered", description: "All active Desk jobs have been paused." });
+    };
+
+    // ▶️ MASTER RESUME (Resumes all Desk Ticket jobs)
+    const handleResumeAll = () => {
+        if (!socketRef.current) return;
+        Object.keys(jobs).forEach(profileName => {
+            const job = jobs[profileName];
+            if (job.isProcessing && job.isPaused) {
+                socketRef.current?.emit('resumeJob', { profileName, jobType: 'ticket' });
+                setJobs((prev: any) => ({ ...prev, [profileName]: { ...prev[profileName], isPaused: false } }));
+            }
+        });
+        toast({ title: "Master Resume Triggered", description: "All Desk jobs are running again!" });
+    };
+
+    // 🛑 MASTER END (Stops all Desk Ticket jobs)
+    const handleEndAll = () => {
+        if (!socketRef.current) return;
+        if (!window.confirm("Are you sure you want to completely end ALL active jobs?")) return;
+        
+        Object.keys(jobs).forEach(profileName => {
+            const job = jobs[profileName];
+            if (job.isProcessing) {
+                socketRef.current?.emit('endJob', { profileName, jobType: 'ticket' });
+                setJobs((prev: any) => ({ ...prev, [profileName]: { ...prev[profileName], isProcessing: false, isPaused: false } }));
+            }
+        });
+        toast({ title: "Master Stop Triggered", description: "All Desk jobs have been ended.", variant: "destructive" });
+    };
 
     return (
         <>
@@ -909,17 +965,40 @@ const MainApp = () => {
                     <Route path="/bulk-webinar-registration" element={<BulkWebinarRegistration jobs={webinarJobs} setJobs={setWebinarJobs} socket={socketRef.current} createInitialJobState={createInitialWebinarJobState} onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} />} />
                     <Route path="/bulk-fsm-contacts" element={<BulkContactsFsm jobs={fsmContactJobs} setJobs={setFsmContactJobs} createInitialJobState={createInitialFsmContactJobState} socket={socketRef.current} onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} />} />
                     <Route path="/bulk-bookings" element={<BulkBookings jobs={bookingJobs} setJobs={setBookingJobs} createInitialJobState={createInitialBookingJobState} socket={socketRef.current} onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} profiles={[]} />} />
-					<Route path="/appointment-manager" element={<AppointmentManager socket={socketRef.current} onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} jobs={jobs} />} />
+                    <Route path="/appointment-manager" element={<AppointmentManager socket={socketRef.current} onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} jobs={jobs} />} />
                     <Route path="/live-stats" element={
                         <DashboardLayout onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} profiles={[]} selectedProfile={null} onProfileChange={() => {}} apiStatus={{ status: 'success', message: '' }} onShowStatus={() => {}} onManualVerify={() => {}} socket={socketRef.current} jobs={jobs}>
                             <LiveStats jobs={jobs} invoiceJobs={invoiceJobs} catalystJobs={catalystJobs} emailJobs={emailJobs} qntrlJobs={qntrlJobs} peopleJobs={peopleJobs} creatorJobs={creatorJobs} projectsJobs={projectsJobs} webinarJobs={bookingJobs} bookingJobs={bookingJobs} />
                         </DashboardLayout>
                     } />
-					<Route path="/speed-test" element={<SpeedTest />} />
+                    <Route path="/speed-test" element={<SpeedTest />} />
                     <Route path="*" element={<NotFound />} />
                 </Routes>
             </BrowserRouter>
+            
             <ProfileModal isOpen={isProfileModalOpen} onClose={() => setIsProfileModalOpen(false)} onSave={handleSaveProfile} profile={editingProfile} socket={socketRef.current} />
+
+            {/* 🚀 GLOBAL CONTROL PANEL */}
+            <div className="fixed bottom-6 left-1/2 -translate-x-1/2 flex gap-3 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md p-3 rounded-full shadow-2xl border border-slate-200 dark:border-slate-800 z-[9999] transition-all">
+                <button 
+                    onClick={handlePauseAll} 
+                    className="flex items-center text-xs font-bold bg-yellow-500 hover:bg-yellow-600 text-white px-5 py-2.5 rounded-full shadow-md transition-transform hover:scale-105"
+                >
+                    ⏸️ Pause All
+                </button>
+                <button 
+                    onClick={handleResumeAll} 
+                    className="flex items-center text-xs font-bold bg-green-500 hover:bg-green-600 text-white px-5 py-2.5 rounded-full shadow-md transition-transform hover:scale-105"
+                >
+                    ▶️ Resume All
+                </button>
+                <button 
+                    onClick={handleEndAll} 
+                    className="flex items-center text-xs font-bold bg-red-500 hover:bg-red-600 text-white px-5 py-2.5 rounded-full shadow-md transition-transform hover:scale-105"
+                >
+                    🛑 End All
+                </button>
+            </div>
 
             <button 
                 onClick={() => {

@@ -31,7 +31,6 @@ export function useJobTimer<T extends AnyJobsState>(
     setJobsState: SetJobsState<T>, 
     jobType: JobType 
 ) {
-    // Store timer IDs AND the last tick timestamp for accurate delta calculation
     const timersRef = useRef<{ 
         [key: string]: { 
             processing?: NodeJS.Timeout, 
@@ -41,11 +40,8 @@ export function useJobTimer<T extends AnyJobsState>(
         } 
     }>({});
 
-    // 🐛 THE FIX: We added '-${job.countdown > 0}' so the effect wakes up when a delay starts!
-    const jobStatuses = Object.values(jobsState as Record<string, AnyJobState>)
-        .map(job => `${job.isProcessing}-${job.isPaused}-${job.countdown > 0}`)
-        .join(',');
-
+    // 🚀 THE FIX: This effect ONLY checks if a timer needs to be started or stopped.
+    // It NO LONGER wipes out all the other timers when one account updates!
     useEffect(() => {
         const timers = timersRef.current;
 
@@ -117,7 +113,6 @@ export function useJobTimer<T extends AnyJobsState>(
                                 return prev;
                             }
                             
-                            // Decrease countdown by actual elapsed time
                             const newCountdown = Math.max(0, currentJob.countdown - deltaSeconds);
                             return { 
                                 ...prev, 
@@ -135,14 +130,17 @@ export function useJobTimer<T extends AnyJobsState>(
                 delete timers[timerKey].lastTickCountdown;
             }
         });
+    }, [jobsState, setJobsState, jobType]);
 
+    // 🧹 SAFETY CLEANUP: Only destroy the timers if you completely close the webpage.
+    useEffect(() => {
         return () => {
+            const timers = timersRef.current;
             Object.values(timers).forEach(t => {
                 if (t.processing) clearInterval(t.processing);
                 if (t.countdown) clearInterval(t.countdown);
             });
             timersRef.current = {};
         };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [jobStatuses, setJobsState, jobType]);
+    }, []);
 }
