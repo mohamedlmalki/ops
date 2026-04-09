@@ -6,11 +6,12 @@ import { Socket } from 'socket.io-client';
 import { DashboardLayout } from './DashboardLayout';
 import { TicketForm } from './desk/TicketForm';
 import { ResultsDisplay } from './desk/ResultsDisplay';
+import { DeskApplyAllModal } from './desk/DeskApplyAllModal'; // Added Import
 import { useToast } from '@/hooks/use-toast';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Ticket, User, Building, Loader2, Download, Trash2 } from 'lucide-react';
+import { Ticket, User, Building, Loader2, Download, Trash2, CopyCheck } from 'lucide-react'; // Added CopyCheck icon
 import { Profile, Jobs, JobState } from '@/App';
 
 interface TicketFormData {
@@ -63,6 +64,7 @@ export const ZohoDashboard: React.FC<ZohoDashboardProps> = ({ jobs, setJobs, cre
   
   const [apiStatus, setApiStatus] = useState<ApiStatus>({ status: 'loading', message: 'Connecting to server...', fullResponse: null });
   const [isStatusModalOpen, setIsStatusModalOpen] = useState(false);
+  const [isApplyAllModalOpen, setIsApplyAllModalOpen] = useState(false); // Added State
   const [testResult, setTestResult] = useState<any>(null);
   const [isTestModalOpen, setIsTestModalOpen] = useState(false);
   const [isTestVerifying, setIsTestVerifying] = useState(false);
@@ -131,6 +133,31 @@ export const ZohoDashboard: React.FC<ZohoDashboardProps> = ({ jobs, setJobs, cre
       socket.emit('checkApiStatus', { selectedProfileName: activeProfileName, service: 'desk' });
     }
   }, [activeProfileName, socket]);
+
+  // --- NEW: THE APPLY ALL FUNCTION ---
+  const handleApplyAll = (masterData: Partial<TicketFormData>) => {
+    setJobs(prevJobs => {
+      const updatedJobs = { ...prevJobs };
+      
+      // Loop through every profile found in the system
+      profiles.forEach(profile => {
+        const pName = profile.profileName;
+        if (updatedJobs[pName]) {
+          updatedJobs[pName] = {
+            ...updatedJobs[pName],
+            formData: {
+              ...updatedJobs[pName].formData,
+              ...masterData // Merge the new values from the Master Modal
+            }
+          };
+        }
+      });
+      
+      return updatedJobs;
+    });
+    
+    toast({ title: "Bulk Update Applied", description: "The fields have been copied to all accounts." });
+  };
 
   const handleFormDataChange = (newFormData: TicketFormData) => {
     if (activeProfileName) {
@@ -245,8 +272,8 @@ export const ZohoDashboard: React.FC<ZohoDashboardProps> = ({ jobs, setJobs, cre
 
   return (
     <>
-      <DashboardLayout 
-        stats={stats} 
+      <DashboardLayout 
+        stats={stats} 
         onAddProfile={onAddProfile}
         profiles={profiles}
         selectedProfile={selectedProfile}
@@ -260,23 +287,35 @@ export const ZohoDashboard: React.FC<ZohoDashboardProps> = ({ jobs, setJobs, cre
         onDeleteProfile={onDeleteProfile}
       >
         <div className="space-y-8">
+          {/* --- NEW: APPLY ALL TRIGGER --- */}
+          <div className="flex justify-end px-2">
+            <Button 
+              onClick={() => setIsApplyAllModalOpen(true)}
+              variant="outline"
+              className="bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100 shadow-sm"
+            >
+              <CopyCheck className="h-4 w-4 mr-2" />
+              Apply to All Accounts
+            </Button>
+          </div>
+
           {currentJob && (
             <>
               <TicketForm
                 jobState={currentJob}
                 formData={currentJob.formData}
                 onFormDataChange={handleFormDataChange}
-                onSubmit={() => handleFormSubmit()} 
+                onSubmit={() => handleFormSubmit()} 
                 isProcessing={currentJob.isProcessing}
                 isPaused={currentJob.isPaused}
                 onPauseResume={handlePauseResume}
                 onEndJob={handleEndJob}
                 onSendTest={handleSendTest}
-                socket={socket} 
+                socket={socket} 
                 selectedProfile={selectedProfile}
                 onFetchFailures={handleFetchEmailFailures}
                 onClearTicketLogs={handleClearTicketLogs}
-                onRetryFailed={handleRetryFailed} 
+                onRetryFailed={handleRetryFailed} 
                 failedCount={currentJob.results.filter(r => !r.success).length}
               />
               <ResultsDisplay
@@ -287,17 +326,148 @@ export const ZohoDashboard: React.FC<ZohoDashboardProps> = ({ jobs, setJobs, cre
                 countdown={currentJob.countdown}
                 filterText={currentJob.filterText}
                 onFilterTextChange={(text) => setJobs(prev => ({...prev, [activeProfileName!]: { ...prev[activeProfileName!], filterText: text }}))}
-                onRetry={handleRetryFailed} 
+                onRetry={handleRetryFailed} 
               />
             </>
           )}
         </div>
       </DashboardLayout>
       
-      {/* Dialogs... */}
-      <Dialog open={isStatusModalOpen} onOpenChange={setIsStatusModalOpen}><DialogContent className="max-w-2xl"><DialogHeader><DialogTitle>API Connection Status</DialogTitle><DialogDescription>This is the live status of the connection to the Zoho Desk API for the selected profile.</DialogDescription></DialogHeader><div className={`p-4 rounded-md ${apiStatus.status === 'success' ? 'bg-green-100 dark:bg-green-900/50' : apiStatus.status === 'error' ? 'bg-red-100 dark:bg-red-900/50' : 'bg-muted'}`}><p className="font-bold text-lg">{apiStatus.status.charAt(0).toUpperCase() + apiStatus.status.slice(1)}</p><p className="text-sm text-muted-foreground mt-1">{apiStatus.message}</p></div>{apiStatus.fullResponse && (<div className="mt-4"><h4 className="text-sm font-semibold mb-2 text-foreground">Full Response from Server:</h4><pre className="bg-muted p-4 rounded-lg text-xs font-mono text-foreground border max-h-60 overflow-y-auto">{JSON.stringify(apiStatus.fullResponse, null, 2)}</pre></div>)}<Button onClick={() => setIsStatusModalOpen(false)} className="mt-4">Close</Button></DialogContent></Dialog>
-      <Dialog open={isTestModalOpen} onOpenChange={setIsTestModalOpen}><DialogContent className="max-w-2xl bg-card border-border shadow-large"><DialogHeader><DialogTitle>Test Ticket Response</DialogTitle></DialogHeader><div className="max-h-[70vh] overflow-y-auto space-y-4 p-1">{testResult?.fullResponse?.ticketCreate ? (<><div><h4 className="text-sm font-semibold mb-2 text-foreground">Ticket Creation Response</h4><pre className="bg-muted/50 p-4 rounded-lg text-xs font-mono text-foreground border border-border">{JSON.stringify(testResult.fullResponse.ticketCreate, null, 2)}</pre></div>{testResult.fullResponse.sendReply && (<div><h4 className="text-sm font-semibold mb-2 text-foreground">Send Reply Response</h4><pre className="bg-muted/50 p-4 rounded-lg text-xs font-mono text-foreground border border-border">{JSON.stringify(testResult.fullResponse.sendReply, null, 2)}</pre></div>)}{isTestVerifying && (<div className="p-4 rounded-md bg-muted/50 text-center flex items-center justify-center"><Loader2 className="h-4 w-4 mr-2 animate-spin"/><span className="text-sm text-muted-foreground">Verifying email, please wait...</span></div>)}{testResult.fullResponse.verifyEmail && (<div><h4 className="text-sm font-semibold mb-2 text-foreground">Email Verification Response</h4><pre className="bg-muted/50 p-4 rounded-lg text-xs font-mono text-foreground border border-border">{JSON.stringify(testResult.fullResponse.verifyEmail, null, 2)}</pre></div>)}</>) : (<pre className="bg-muted/50 p-4 rounded-lg text-xs font-mono text-foreground border border-border">{JSON.stringify(testResult, null, 2)}</pre>)}</div><Button onClick={() => setIsTestModalOpen(false)}>Close</Button></DialogContent></Dialog>
-      <Dialog open={isFailuresModalOpen} onOpenChange={setIsFailuresModalOpen}><DialogContent className="max-w-3xl"><DialogHeader><DialogTitle>Email Delivery Failure Alerts ({emailFailures.length})</DialogTitle><DialogDescription>Showing recent email delivery failures for the selected department.</DialogDescription></DialogHeader><div className="max-h-[60vh] overflow-y-auto -mx-6 px-6">{emailFailures.length > 0 ? (<div className="space-y-4">{emailFailures.map((failure, index) => (<div key={index} className="p-4 rounded-lg border bg-card"><div className="flex items-center justify-between mb-2"><div className="flex items-center space-x-2"><Ticket className="h-4 w-4 text-primary"/><span className="font-semibold text-foreground">Ticket #{failure.ticketNumber}:<span className="font-normal text-muted-foreground ml-2">{failure.email}</span></span></div><Badge variant="destructive">Failed</Badge></div><p className="text-sm text-muted-foreground italic mb-3">"{failure.subject}"</p><div className="text-xs space-y-2 mb-3"><div className="flex items-center"><Building className="h-3 w-3 mr-2 text-muted-foreground"/><span className="text-muted-foreground mr-1">Department:</span><span className="font-medium text-foreground">{failure.departmentName}</span></div><div className="flex items-center"><User className="h-3 w-3 mr-2 text-muted-foreground"/><span className="text-muted-foreground mr-1">Assignee:</span><span className="font-medium text-foreground">{failure.assignee?.name || 'Unassigned'}</span></div></div><div className="p-3 rounded-md bg-muted/50 text-xs space-y-1"><p><strong className="text-foreground">Reason:</strong> {failure.reason}</p><p><strong className="text-foreground">Error:</strong> {failure.errorMessage}</p></div></div>))}</div>) : (<div className="text-center py-12"><p className="font-semibold">No Failures Found</p><p className="text-sm text-muted-foreground mt-1">There are no recorded email delivery failures for this department.</p></div>)}</div><DialogFooter className="pt-4 border-t mt-4"><Button variant="outline" onClick={handleExportFailures} disabled={emailFailures.length === 0}><Download className="h-4 w-4 mr-2" />Export Emails</Button><Button variant="destructive" onClick={handleClearFailures} disabled={emailFailures.length === 0}><Trash2 className="h-4 w-4 mr-2" />Clear All Failures</Button><Button onClick={() => setIsFailuresModalOpen(false)}>Close</Button></DialogFooter></DialogContent></Dialog>
+      {/* --- NEW: APPLY ALL MODAL COMPONENT --- */}
+      <DeskApplyAllModal 
+        isOpen={isApplyAllModalOpen} 
+        onClose={() => setIsApplyAllModalOpen(false)} 
+        onApply={handleApplyAll} 
+      />
+
+      {/* API STATUS DIALOG */}
+      <Dialog open={isStatusModalOpen} onOpenChange={setIsStatusModalOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>API Connection Status</DialogTitle>
+            <DialogDescription>This is the live status of the connection to the Zoho Desk API for the selected profile.</DialogDescription>
+          </DialogHeader>
+          <div className={`p-4 rounded-md ${apiStatus.status === 'success' ? 'bg-green-100 dark:bg-green-900/50' : apiStatus.status === 'error' ? 'bg-red-100 dark:bg-red-900/50' : 'bg-muted'}`}>
+            <p className="font-bold text-lg">{apiStatus.status.charAt(0).toUpperCase() + apiStatus.status.slice(1)}</p>
+            <p className="text-sm text-muted-foreground mt-1">{apiStatus.message}</p>
+          </div>
+          {apiStatus.fullResponse && (
+            <div className="mt-4">
+              <h4 className="text-sm font-semibold mb-2 text-foreground">Full Response from Server:</h4>
+              <pre className="bg-muted p-4 rounded-lg text-xs font-mono text-foreground border max-h-60 overflow-y-auto">
+                {JSON.stringify(apiStatus.fullResponse, null, 2)}
+              </pre>
+            </div>
+          )}
+          <Button onClick={() => setIsStatusModalOpen(false)} className="mt-4">Close</Button>
+        </DialogContent>
+      </Dialog>
+
+      {/* TEST RESULT DIALOG */}
+      <Dialog open={isTestModalOpen} onOpenChange={setIsTestModalOpen}>
+        <DialogContent className="max-w-2xl bg-card border-border shadow-large">
+          <DialogHeader>
+            <DialogTitle>Test Ticket Response</DialogTitle>
+          </DialogHeader>
+          <div className="max-h-[70vh] overflow-y-auto space-y-4 p-1">
+            {testResult?.fullResponse?.ticketCreate ? (
+              <>
+                <div>
+                  <h4 className="text-sm font-semibold mb-2 text-foreground">Ticket Creation Response</h4>
+                  <pre className="bg-muted/50 p-4 rounded-lg text-xs font-mono text-foreground border border-border">
+                    {JSON.stringify(testResult.fullResponse.ticketCreate, null, 2)}
+                  </pre>
+                </div>
+                {testResult.fullResponse.sendReply && (
+                  <div>
+                    <h4 className="text-sm font-semibold mb-2 text-foreground">Send Reply Response</h4>
+                    <pre className="bg-muted/50 p-4 rounded-lg text-xs font-mono text-foreground border border-border">
+                      {JSON.stringify(testResult.fullResponse.sendReply, null, 2)}
+                    </pre>
+                  </div>
+                )}
+                {isTestVerifying && (
+                  <div className="p-4 rounded-md bg-muted/50 text-center flex items-center justify-center">
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin"/>
+                    <span className="text-sm text-muted-foreground">Verifying email, please wait...</span>
+                  </div>
+                )}
+                {testResult.fullResponse.verifyEmail && (
+                  <div>
+                    <h4 className="text-sm font-semibold mb-2 text-foreground">Email Verification Response</h4>
+                    <pre className="bg-muted/50 p-4 rounded-lg text-xs font-mono text-foreground border border-border">
+                      {JSON.stringify(testResult.fullResponse.verifyEmail, null, 2)}
+                    </pre>
+                  </div>
+                )}
+              </>
+            ) : (
+              <pre className="bg-muted/50 p-4 rounded-lg text-xs font-mono text-foreground border border-border">
+                {JSON.stringify(testResult, null, 2)}
+              </pre>
+            )}
+          </div>
+          <Button onClick={() => setIsTestModalOpen(false)}>Close</Button>
+        </DialogContent>
+      </Dialog>
+
+      {/* FAILURES DIALOG */}
+      <Dialog open={isFailuresModalOpen} onOpenChange={setIsFailuresModalOpen}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Email Delivery Failure Alerts ({emailFailures.length})</DialogTitle>
+            <DialogDescription>Showing recent email delivery failures for the selected department.</DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[60vh] overflow-y-auto -mx-6 px-6">
+            {emailFailures.length > 0 ? (
+              <div className="space-y-4">
+                {emailFailures.map((failure, index) => (
+                  <div key={index} className="p-4 rounded-lg border bg-card">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center space-x-2">
+                        <Ticket className="h-4 w-4 text-primary"/>
+                        <span className="font-semibold text-foreground">Ticket #{failure.ticketNumber}:<span className="font-normal text-muted-foreground ml-2">{failure.email}</span></span>
+                      </div>
+                      <Badge variant="destructive">Failed</Badge>
+                    </div>
+                    <p className="text-sm text-muted-foreground italic mb-3">"{failure.subject}"</p>
+                    <div className="text-xs space-y-2 mb-3">
+                      <div className="flex items-center">
+                        <Building className="h-3 w-3 mr-2 text-muted-foreground"/>
+                        <span className="text-muted-foreground mr-1">Department:</span>
+                        <span className="font-medium text-foreground">{failure.departmentName}</span>
+                      </div>
+                      <div className="flex items-center">
+                        <User className="h-3 w-3 mr-2 text-muted-foreground"/>
+                        <span className="text-muted-foreground mr-1">Assignee:</span>
+                        <span className="font-medium text-foreground">{failure.assignee?.name || 'Unassigned'}</span>
+                      </div>
+                    </div>
+                    <div className="p-3 rounded-md bg-muted/50 text-xs space-y-1">
+                      <p><strong className="text-foreground">Reason:</strong> {failure.reason}</p>
+                      <p><strong className="text-foreground">Error:</strong> {failure.errorMessage}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-12">
+                <p className="font-semibold">No Failures Found</p>
+                <p className="text-sm text-muted-foreground mt-1">There are no recorded email delivery failures for this department.</p>
+              </div>
+            )}
+          </div>
+          <DialogFooter className="pt-4 border-t mt-4">
+            <Button variant="outline" onClick={handleExportFailures} disabled={emailFailures.length === 0}>
+              <Download className="h-4 w-4 mr-2" />Export Emails
+            </Button>
+            <Button variant="destructive" onClick={handleClearFailures} disabled={emailFailures.length === 0}>
+              <Trash2 className="h-4 w-4 mr-2" />Clear All Failures
+            </Button>
+            <Button onClick={() => setIsFailuresModalOpen(false)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 };
