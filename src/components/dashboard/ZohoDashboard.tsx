@@ -6,12 +6,12 @@ import { Socket } from 'socket.io-client';
 import { DashboardLayout } from './DashboardLayout';
 import { TicketForm } from './desk/TicketForm';
 import { ResultsDisplay } from './desk/ResultsDisplay';
-import { DeskApplyAllModal } from './desk/DeskApplyAllModal'; // Added Import
+import { DeskApplyAllModal } from './desk/DeskApplyAllModal'; 
 import { useToast } from '@/hooks/use-toast';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Ticket, User, Building, Loader2, Download, Trash2, CopyCheck } from 'lucide-react'; // Added CopyCheck icon
+import { Ticket, User, Building, Loader2, Download, Trash2 } from 'lucide-react'; 
 import { Profile, Jobs, JobState } from '@/App';
 
 interface TicketFormData {
@@ -19,9 +19,11 @@ interface TicketFormData {
   subject: string;
   description: string;
   delay: number;
+  stopAfterFailures: number;
   sendDirectReply: boolean;
   verifyEmail: boolean;
   displayName: string;
+  senderName: string;
 }
 
 type ApiStatus = {
@@ -57,14 +59,13 @@ export const ZohoDashboard: React.FC<ZohoDashboardProps> = ({ jobs, setJobs, cre
   const { toast } = useToast();
   const [socket, setSocket] = useState<Socket | null>(socketProp);
   
-  // --- FIXED: USE LOCAL STORAGE TO REMEMBER THE ACCOUNT ---
   const [activeProfileName, setActiveProfileName] = useState<string | null>(() => {
       return localStorage.getItem('desk_activeProfile') || null;
   });
   
   const [apiStatus, setApiStatus] = useState<ApiStatus>({ status: 'loading', message: 'Connecting to server...', fullResponse: null });
   const [isStatusModalOpen, setIsStatusModalOpen] = useState(false);
-  const [isApplyAllModalOpen, setIsApplyAllModalOpen] = useState(false); // Added State
+  const [isApplyAllModalOpen, setIsApplyAllModalOpen] = useState(false); 
   const [testResult, setTestResult] = useState<any>(null);
   const [isTestModalOpen, setIsTestModalOpen] = useState(false);
   const [isTestVerifying, setIsTestVerifying] = useState(false);
@@ -84,10 +85,8 @@ export const ZohoDashboard: React.FC<ZohoDashboardProps> = ({ jobs, setJobs, cre
 
   useEffect(() => { setSocket(socketProp); }, [socketProp]);
 
-  // --- FIXED: INITIALIZE PROFILES AND LOCAL STORAGE PROPERLY ---
   useEffect(() => {
     if (profiles.length > 0) {
-        // Ensure the saved profile actually still exists in the system
         const profileExists = activeProfileName && profiles.find(p => p.profileName === activeProfileName);
         
         if (!profileExists) {
@@ -96,7 +95,6 @@ export const ZohoDashboard: React.FC<ZohoDashboardProps> = ({ jobs, setJobs, cre
             localStorage.setItem('desk_activeProfile', firstProfile);
         }
 
-        // Setup jobs object
         setJobs(prevJobs => {
             const newJobs = { ...prevJobs };
             let updated = false;
@@ -134,20 +132,32 @@ export const ZohoDashboard: React.FC<ZohoDashboardProps> = ({ jobs, setJobs, cre
     }
   }, [activeProfileName, socket]);
 
-  // --- NEW: THE APPLY ALL FUNCTION ---
+  // --- 🔥 UPDATED: APPLY ALL NOW AUTOMATICALLY UPDATES NATIVE ZOHO SENDER NAME ---
   const handleApplyAll = (masterData: Partial<TicketFormData>) => {
+    let nativeNameUpdatedCount = 0;
+
     setJobs(prevJobs => {
       const updatedJobs = { ...prevJobs };
       
-      // Loop through every profile found in the system
       profiles.forEach(profile => {
         const pName = profile.profileName;
+        
+        // 🚀 THE MAGIC TRICK: If the user typed a Native Sender Name, we automatically 
+        // trigger the socket event to update Zoho for this profile in the background!
+        if (masterData.displayName && masterData.displayName.trim() !== '' && socket && profile.desk?.mailReplyAddressId) {
+            socket.emit('updateMailReplyAddressDetails', { 
+                selectedProfileName: pName, 
+                displayName: masterData.displayName 
+            });
+            nativeNameUpdatedCount++;
+        }
+
         if (updatedJobs[pName]) {
           updatedJobs[pName] = {
             ...updatedJobs[pName],
             formData: {
               ...updatedJobs[pName].formData,
-              ...masterData // Merge the new values from the Master Modal
+              ...masterData 
             }
           };
         }
@@ -156,7 +166,12 @@ export const ZohoDashboard: React.FC<ZohoDashboardProps> = ({ jobs, setJobs, cre
       return updatedJobs;
     });
     
-    toast({ title: "Bulk Update Applied", description: "The fields have been copied to all accounts." });
+    // Show a smart toast message depending on what happened
+    if (nativeNameUpdatedCount > 0) {
+        toast({ title: "Bulk Update Applied", description: `Fields copied to all accounts. Automatically updated Native Sender Name in Zoho for ${nativeNameUpdatedCount} accounts!` });
+    } else {
+        toast({ title: "Bulk Update Applied", description: "The fields have been copied to all accounts." });
+    }
   };
 
   const handleFormDataChange = (newFormData: TicketFormData) => {
@@ -170,7 +185,6 @@ export const ZohoDashboard: React.FC<ZohoDashboardProps> = ({ jobs, setJobs, cre
     
     const currentJob = jobs[activeProfileName];
     
-    // Use override list (from Retry) or current form data
     const emailsToProcess = overrideEmails 
         ? overrideEmails 
         : currentJob.formData.emails.split('\n').map(email => email.trim()).filter(email => email !== '');
@@ -201,12 +215,11 @@ export const ZohoDashboard: React.FC<ZohoDashboardProps> = ({ jobs, setJobs, cre
     });
   };
 
-  // --- FIXED: SAVE SELECTED PROFILE TO LOCAL STORAGE ---
   const handleProfileChange = (profileName: string) => { 
       const profile = profiles.find(p => p.profileName === profileName); 
       if (profile) { 
           setActiveProfileName(profileName); 
-          localStorage.setItem('desk_activeProfile', profileName); // <-- Saves the state permanently
+          localStorage.setItem('desk_activeProfile', profileName); 
           toast({ title: "Profile Changed" }); 
       } 
   };
@@ -229,7 +242,6 @@ export const ZohoDashboard: React.FC<ZohoDashboardProps> = ({ jobs, setJobs, cre
       const jobToRetry = jobs[activeProfileName];
       const failedItems = jobToRetry.results.filter(r => !r.success);
 
-      // Extract Clean Emails
       const failedEmailsList = failedItems
           .map(r => r.email)
           .filter(email => email && email.trim() !== '');
@@ -241,7 +253,6 @@ export const ZohoDashboard: React.FC<ZohoDashboardProps> = ({ jobs, setJobs, cre
 
       const emailsString = failedEmailsList.join('\n');
 
-      // 1. Update the form text (so the user sees what's running)
       setJobs(prev => ({
           ...prev,
           [activeProfileName]: {
@@ -253,7 +264,6 @@ export const ZohoDashboard: React.FC<ZohoDashboardProps> = ({ jobs, setJobs, cre
           }
       }));
 
-      // 2. Auto-start the job immediately
       toast({ title: "Retrying...", description: `Restarting job for ${failedEmailsList.length} failed items.` });
       handleFormSubmit(failedEmailsList);
   };
@@ -272,8 +282,8 @@ export const ZohoDashboard: React.FC<ZohoDashboardProps> = ({ jobs, setJobs, cre
 
   return (
     <>
-      <DashboardLayout 
-        stats={stats} 
+      <DashboardLayout 
+        stats={stats} 
         onAddProfile={onAddProfile}
         profiles={profiles}
         selectedProfile={selectedProfile}
@@ -287,36 +297,24 @@ export const ZohoDashboard: React.FC<ZohoDashboardProps> = ({ jobs, setJobs, cre
         onDeleteProfile={onDeleteProfile}
       >
         <div className="space-y-8">
-          {/* --- NEW: APPLY ALL TRIGGER --- */}
-          <div className="flex justify-end px-2">
-            <Button 
-              onClick={() => setIsApplyAllModalOpen(true)}
-              variant="outline"
-              className="bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100 shadow-sm"
-            >
-              <CopyCheck className="h-4 w-4 mr-2" />
-              Apply to All Accounts
-            </Button>
-          </div>
-
           {currentJob && (
             <>
               <TicketForm
                 jobState={currentJob}
                 formData={currentJob.formData}
                 onFormDataChange={handleFormDataChange}
-                onSubmit={() => handleFormSubmit()} 
+                onSubmit={() => handleFormSubmit()} 
                 isProcessing={currentJob.isProcessing}
                 isPaused={currentJob.isPaused}
                 onPauseResume={handlePauseResume}
                 onEndJob={handleEndJob}
-                onSendTest={handleSendTest}
-                socket={socket} 
+                socket={socket} 
                 selectedProfile={selectedProfile}
                 onFetchFailures={handleFetchEmailFailures}
                 onClearTicketLogs={handleClearTicketLogs}
-                onRetryFailed={handleRetryFailed} 
+                onRetryFailed={handleRetryFailed} 
                 failedCount={currentJob.results.filter(r => !r.success).length}
+                onApplyAllClick={() => setIsApplyAllModalOpen(true)}
               />
               <ResultsDisplay
                 results={currentJob.results}
@@ -326,21 +324,22 @@ export const ZohoDashboard: React.FC<ZohoDashboardProps> = ({ jobs, setJobs, cre
                 countdown={currentJob.countdown}
                 filterText={currentJob.filterText}
                 onFilterTextChange={(text) => setJobs(prev => ({...prev, [activeProfileName!]: { ...prev[activeProfileName!], filterText: text }}))}
-                onRetry={handleRetryFailed} 
+                onRetry={handleRetryFailed} 
+                socket={socket}
+                activeProfileName={activeProfileName}
+                showDelugeColumn={false}
               />
             </>
           )}
         </div>
       </DashboardLayout>
       
-      {/* --- NEW: APPLY ALL MODAL COMPONENT --- */}
       <DeskApplyAllModal 
         isOpen={isApplyAllModalOpen} 
         onClose={() => setIsApplyAllModalOpen(false)} 
         onApply={handleApplyAll} 
       />
 
-      {/* API STATUS DIALOG */}
       <Dialog open={isStatusModalOpen} onOpenChange={setIsStatusModalOpen}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
@@ -363,7 +362,6 @@ export const ZohoDashboard: React.FC<ZohoDashboardProps> = ({ jobs, setJobs, cre
         </DialogContent>
       </Dialog>
 
-      {/* TEST RESULT DIALOG */}
       <Dialog open={isTestModalOpen} onOpenChange={setIsTestModalOpen}>
         <DialogContent className="max-w-2xl bg-card border-border shadow-large">
           <DialogHeader>
@@ -411,7 +409,6 @@ export const ZohoDashboard: React.FC<ZohoDashboardProps> = ({ jobs, setJobs, cre
         </DialogContent>
       </Dialog>
 
-      {/* FAILURES DIALOG */}
       <Dialog open={isFailuresModalOpen} onOpenChange={setIsFailuresModalOpen}>
         <DialogContent className="max-w-3xl">
           <DialogHeader>

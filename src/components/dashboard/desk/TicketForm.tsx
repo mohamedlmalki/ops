@@ -12,7 +12,7 @@ import {
     Send, Eye, Mail, Clock, MessageSquare, Users, Pause, Play, Square, 
     Bot, Upload, RefreshCw, Trash2, MailWarning, CheckCircle2, 
     XCircle, ImagePlus, AlertTriangle, RotateCcw, Sparkles, Edit, 
-    BarChart3
+    BarChart3, CopyCheck 
 } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/hooks/use-toast';
@@ -51,6 +51,7 @@ interface TicketFormProps {
   jobState: JobState | null;
   onRetryFailed: () => void;
   failedCount: number;
+  onApplyAllClick: () => void; // <--- NEW PROP
 }
 
 const ImageToolDialog = ({ onApply }: { onApply: (html: string) => void }) => {
@@ -79,7 +80,7 @@ const ImageToolDialog = ({ onApply }: { onApply: (html: string) => void }) => {
 export const TicketForm: React.FC<TicketFormProps> = ({
   onSubmit, isProcessing, isPaused, onPauseResume, onEndJob,
   formData, onFormDataChange, socket, selectedProfile, onFetchFailures,
-  onClearTicketLogs, jobState, onRetryFailed, failedCount
+  onClearTicketLogs, jobState, onRetryFailed, failedCount, onApplyAllClick
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
@@ -130,7 +131,6 @@ export const TicketForm: React.FC<TicketFormProps> = ({
     const handleDetailsResult = (result: any) => {
         setIsLoadingName(false);
         if (result.success) {
-            // 🚨 FIX: Safely read the exact displayName whether it is wrapped in .data or not!
             const name = result.notConfigured ? 'N/A' : (result.data?.displayName || result.data?.data?.displayName || '');
             onFormDataChange({ ...formData, displayName: name });
         } else {
@@ -193,7 +193,16 @@ export const TicketForm: React.FC<TicketFormProps> = ({
                 <span>Create Bulk Tickets</span>
               </CardTitle>
             </div>
-            <div className="flex items-center space-x-2">
+            <div className="flex items-center space-x-2 flex-wrap gap-y-2">
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={onApplyAllClick}
+                className="bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100 hover:text-purple-800 dark:bg-purple-900/20 dark:text-purple-400 dark:border-purple-800"
+              >
+                  <CopyCheck className="h-4 w-4 mr-2" />
+                  Apply to All
+              </Button>
               <Button 
                 variant="outline" 
                 size="sm" 
