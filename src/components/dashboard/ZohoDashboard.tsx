@@ -7,7 +7,6 @@ import { DashboardLayout } from './DashboardLayout';
 import { TicketForm } from './desk/TicketForm';
 import { ResultsDisplay } from './desk/ResultsDisplay';
 import { DeskApplyAllModal } from './desk/DeskApplyAllModal'; 
-import { InboxRadarModal } from './desk/InboxRadarModal'; // <--- NEW IMPORT
 import { useToast } from '@/hooks/use-toast';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
@@ -70,7 +69,6 @@ export const ZohoDashboard: React.FC<ZohoDashboardProps> = ({ jobs, setJobs, cre
   const [isApplyAllModalOpen, setIsApplyAllModalOpen] = useState(false); 
   
   // <--- NEW: RADAR MODAL STATE --->
-  const [isRadarModalOpen, setIsRadarModalOpen] = useState(false);
   
   const [testResult, setTestResult] = useState<any>(null);
   const [isTestModalOpen, setIsTestModalOpen] = useState(false);
@@ -163,7 +161,8 @@ export const ZohoDashboard: React.FC<ZohoDashboardProps> = ({ jobs, setJobs, cre
               : updatedJobs[pName].formData.description;
 
           if (masterData.appendAccountNumber && finalDescription) {
-              finalDescription = `${finalDescription}\n\n${index + 1}`;
+              // I added 6 HTML breaks here, which creates 6 massive blank lines!
+              finalDescription = `${finalDescription}<br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br>${index + 1}`;
           }
 
           updatedJobs[pName] = {
@@ -314,15 +313,7 @@ export const ZohoDashboard: React.FC<ZohoDashboardProps> = ({ jobs, setJobs, cre
       >
         <div className="space-y-8">
           
-          {/* --- NEW: OPEN INBOX RADAR BUTTON --- */}
-          <div className="flex justify-end">
-             <Button
-                onClick={() => setIsRadarModalOpen(true)}
-                className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold shadow-md transition-all"
-             >
-                <Radar className="h-4 w-4 mr-2" /> Open Inbox Radar
-             </Button>
-          </div>
+          
 
           {currentJob && (
             <>
@@ -367,13 +358,6 @@ export const ZohoDashboard: React.FC<ZohoDashboardProps> = ({ jobs, setJobs, cre
         onApply={handleApplyAll} 
       />
 
-      {/* --- NEW: INBOX RADAR MODAL --- */}
-      <InboxRadarModal
-        isOpen={isRadarModalOpen}
-        onClose={() => setIsRadarModalOpen(false)}
-        profiles={profiles}
-        socket={socket}
-      />
 
       <Dialog open={isStatusModalOpen} onOpenChange={setIsStatusModalOpen}>
         <DialogContent className="max-w-2xl">

@@ -12,7 +12,7 @@ import {
     Send, Eye, Mail, Clock, MessageSquare, Users, Pause, Play, Square, 
     Bot, Upload, RefreshCw, Trash2, MailWarning, CheckCircle2, 
     XCircle, ImagePlus, AlertTriangle, RotateCcw, Sparkles, Edit, 
-    BarChart3, CopyCheck 
+    BarChart3, CopyCheck, Radar 
 } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/hooks/use-toast';
@@ -80,7 +80,7 @@ const ImageToolDialog = ({ onApply }: { onApply: (html: string) => void }) => {
 export const TicketForm: React.FC<TicketFormProps> = ({
   onSubmit, isProcessing, isPaused, onPauseResume, onEndJob,
   formData, onFormDataChange, socket, selectedProfile, onFetchFailures,
-  onClearTicketLogs, jobState, onRetryFailed, failedCount, onApplyAllClick
+  onClearTicketLogs, jobState, onRetryFailed, failedCount, onApplyAllClick, onOpenInboxRadarClick
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
@@ -194,6 +194,8 @@ export const TicketForm: React.FC<TicketFormProps> = ({
               </CardTitle>
             </div>
             <div className="flex items-center space-x-2 flex-wrap gap-y-2">
+			
+			
               <Button 
                 variant="outline" 
                 size="sm" 
