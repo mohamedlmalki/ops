@@ -499,9 +499,6 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
 
   // 🚨 MASSIVE LOGS ADDED TO DEBUG "APPLY ALL"
   const handleApplyToAll = async (updates: any) => {
-    console.log(`\n🟢 ========================================`);
-    console.log(`🟢 [APPLY ALL] STARTING`);
-    console.log(`🟢 Updates Received from Popup:`, updates);
     setIsApplyingAll(true);
 
     if (updates.displayName !== undefined) {
@@ -513,26 +510,42 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
 
     setJobs((prev: any) => {
       const next = { ...prev };
-      console.log(`🟢 Iterating over ${profiles.length} profiles to apply data...`);
       
-      profiles.forEach(profile => {
-        const pName = profile.profileName;
+      profiles.forEach((profile) => {
+        const pName = profile.profileName; // This is the Account Name
         
         // Safety check: Does this profile exist in the main UI state?
         const existingJob = next[pName] || createInitialJobState();
+        
+        // 1. Grab the text that is meant for the Smart Text Splitter
+        let customSmartText = updates.smartSplitterText !== undefined 
+            ? updates.smartSplitterText 
+            : existingJob.formData.smartSplitterText;
+            
+        const shouldAppend = updates.appendAccountNumber !== undefined 
+            ? updates.appendAccountNumber 
+            : existingJob.formData.appendAccountNumber;
+
+        // 2. Inject the text FIRST, then 6 line breaks, then the Account Name
+        if (shouldAppend && customSmartText && customSmartText.trim() !== '') {
+            const suffix = `<br><br><br><br><br><br>${pName}`;
+            
+            // Prevent double injection if you click Apply All multiple times
+            if (!customSmartText.endsWith(suffix)) {
+                customSmartText = `${customSmartText}${suffix}`;
+            }
+        }
 
         next[pName] = {
           ...existingJob,
           formData: { 
             ...existingJob.formData, 
-            ...updates 
+            ...updates,
+            smartSplitterText: customSmartText // Saves to the correct Smart Text Splitter field
           }
         };
-        console.log(`   ✅ Applied to: ${pName}`);
       });
 
-      console.log(`🟢 [APPLY ALL] FINISHED. Final System State:`, next);
-      console.log(`🟢 ========================================\n`);
       return next;
     });
 
@@ -1001,17 +1014,22 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
                             <SmartTextSplitter
                                 value={jobState.formData.smartSplitterText || ''}
                                 onChange={(val) => handleFormDataChange('smartSplitterText', val)}
-                                appendAccountNumber={appendAccountNumber} 
-                                accountName={selectedProfileName}         
-                                accountIndex={profiles.findIndex(p => p.profileName === selectedProfileName) + 1} 
                                 fields={allFields
-                                    .filter(f => visibleFields[f.column_name] && f.column_name !== jobState.formData.primaryField)
+                                    // 🚨 FIXED: Removed "visibleFields" filter so it sees ALL multiline fields
+                                    .filter(f => f.column_name !== jobState.formData.primaryField)
                                     .map(f => ({
                                         api_name: f.column_name,
                                         field_label: f.i18n_display_name || f.display_name,
                                         data_type: f.column_type
                                     }))}
                                 onSplitValues={(newValues) => {
+                                    // 🚨 Optional: Automatically "unhide" the fields on your screen so you can see them
+                                    setVisibleFields(prev => {
+                                        const next = { ...prev };
+                                        Object.keys(newValues).forEach(key => next[key] = true);
+                                        return next;
+                                    });
+
                                     setJobs((prev: any) => {
                                         const prevJobState = prev[selectedProfileName!] || jobState;
                                         return {

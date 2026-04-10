@@ -4,7 +4,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
 import { io, Socket } from 'socket.io-client';
 import { useToast } from '@/hooks/use-toast';
 import Index from "@/pages/Index";
@@ -548,6 +548,7 @@ function usePersistentJobs<T>(storageKey: string, initialValue: T) {
 
 const MainApp = () => {
     const { toast } = useToast();
+    const location = useLocation();
     
     // STATE SYSTEM
     const [jobs, setJobs] = usePersistentJobs<Jobs>('zoho_cache_jobs_ticket', {});
@@ -932,138 +933,149 @@ const MainApp = () => {
         abortStartAllRef.current = false; 
         let startedCount = 0;
 
-        const profilesToStart = Object.keys(jobs).filter(profileName => {
-            const job = jobs[profileName];
-            if (!job || job.isProcessing) return false;
-            
-            const emailList = job.formData?.emails?.split('\n').map((e: string) => e.trim()).filter((e: string) => e !== '') || [];
-            const hasEmails = emailList.length > 0;
-            const hasSubject = job.formData?.subject?.trim().length > 0;
-            const hasDescription = job.formData?.description?.trim().length > 0;
+        const path = location.pathname;
 
-            return hasEmails && hasSubject && hasDescription;
-        });
-
-        if (profilesToStart.length === 0) {
-            toast({ 
-                title: "Nothing to start", 
-                description: "No idle accounts found. Make sure Accounts have Emails, a Subject, AND a Description!" 
+        if (path === '/') {
+            // ================= DESK LOGIC =================
+            const profilesToStart = Object.keys(jobs).filter(profileName => {
+                const job = jobs[profileName];
+                if (!job || job.isProcessing) return false;
+                const emailList = job.formData?.emails?.split('\n').map((e: string) => e.trim()).filter((e: string) => e !== '') || [];
+                const hasSubject = job.formData?.subject?.trim().length > 0;
+                const hasDescription = job.formData?.description?.trim().length > 0;
+                return emailList.length > 0 && hasSubject && hasDescription;
             });
-            setIsStartingAll(false);
-            return;
-        }
 
-        toast({ title: "Starting Fleet...", description: `Initializing ${profilesToStart.length} accounts one by one.` });
-
-        for (const pName of profilesToStart) {
-            if (abortStartAllRef.current) {
-                toast({ title: "Start Aborted", description: "Stopped initializing the rest of the fleet." });
-                break;
+            if (profilesToStart.length === 0) {
+                toast({ title: "Nothing to start", description: "No idle Desk accounts found. Ensure they have Emails, a Subject, AND a Description!" });
+                setIsStartingAll(false);
+                return;
             }
 
-            setJobs((prev: any) => {
-                const freshJob = prev[pName];
-                const emailList = freshJob.formData.emails.split('\n').map((e: string) => e.trim()).filter((e: string) => e !== '');
-                
-                socketRef.current?.emit('startBulkCreate', {
-                    ...freshJob.formData,
-                    emails: emailList,
-                    selectedProfileName: pName
+            toast({ title: "Starting Desk Fleet...", description: `Initializing ${profilesToStart.length} accounts.` });
+
+            for (const pName of profilesToStart) {
+                if (abortStartAllRef.current) break;
+                setJobs((prev: any) => {
+                    const freshJob = prev[pName];
+                    const emailList = freshJob.formData.emails.split('\n').map((e: string) => e.trim()).filter((e: string) => e !== '');
+                    socketRef.current?.emit('startBulkCreate', { ...freshJob.formData, emails: emailList, selectedProfileName: pName });
+                    return { ...prev, [pName]: { ...freshJob, results: [], isProcessing: true, isPaused: false, isComplete: false, processingStartTime: new Date(), totalTicketsToProcess: emailList.length, processingTime: 0 }};
                 });
-
-                return {
-                    ...prev,
-                    [pName]: {
-                        ...freshJob,
-                        results: [],
-                        isProcessing: true,
-                        isPaused: false,
-                        isComplete: false,
-                        processingStartTime: new Date(),
-                        totalTicketsToProcess: emailList.length,
-                        processingTime: 0
-                    }
-                };
+                startedCount++;
+                await new Promise(resolve => setTimeout(resolve, 1500)); 
+            }
+        } else if (path === '/projects-tasks') {
+            // ================= PROJECTS LOGIC =================
+            const profilesToStart = Object.keys(projectsJobs).filter(profileName => {
+                const job = projectsJobs[profileName];
+                if (!job || job.isProcessing) return false;
+                const tasksList = job.formData?.primaryValues?.split('\n').map((e: string) => e.trim()).filter((e: string) => e !== '') || [];
+                const hasProject = !!job.formData?.projectId;
+                return tasksList.length > 0 && hasProject;
             });
-            startedCount++;
-            
-            await new Promise(resolve => setTimeout(resolve, 1500)); 
+
+            if (profilesToStart.length === 0) {
+                toast({ title: "Nothing to start", description: "No idle Project accounts found. Ensure they have Tasks and a Project selected!" });
+                setIsStartingAll(false);
+                return;
+            }
+
+            toast({ title: "Starting Projects Fleet...", description: `Initializing ${profilesToStart.length} accounts.` });
+
+            for (const pName of profilesToStart) {
+                if (abortStartAllRef.current) break;
+                setProjectsJobs((prev: any) => {
+                    const freshJob = prev[pName];
+                    const tasksList = freshJob.formData.primaryValues.split('\n').map((e: string) => e.trim()).filter((e: string) => e !== '');
+                    socketRef.current?.emit('startBulkCreateTasks', { selectedProfileName: pName, formData: freshJob.formData });
+                    return { ...prev, [pName]: { ...freshJob, results: [], isProcessing: true, isPaused: false, isComplete: false, processingStartTime: new Date(), totalToProcess: tasksList.length, processingTime: 0 }};
+                });
+                startedCount++;
+                await new Promise(resolve => setTimeout(resolve, 1500)); 
+            }
+        } else {
+            toast({ title: "Not Supported Here", description: "The Start All feature only supports Desk and Projects right now." });
         }
 
-        if (!abortStartAllRef.current) {
-            toast({ title: "Fleet Started", description: `Successfully started ${startedCount} jobs.` });
-        }
+        if (!abortStartAllRef.current && startedCount > 0) toast({ title: "Fleet Started", description: `Successfully started ${startedCount} jobs.` });
         setIsStartingAll(false);
     };
 
     const handlePauseAll = () => {
         if (!socketRef.current) return;
         abortStartAllRef.current = true; 
-        Object.keys(jobs).forEach(profileName => {
-            const job = jobs[profileName];
-            if (job.isProcessing && !job.isPaused) {
-                socketRef.current?.emit('pauseJob', { profileName, jobType: 'ticket' });
-                setJobs((prev: any) => ({ ...prev, [profileName]: { ...prev[profileName], isPaused: true } }));
-            }
-        });
-        toast({ title: "Master Pause Triggered", description: "All active Desk jobs have been paused." });
+        const path = location.pathname;
+
+        if (path === '/') {
+            Object.keys(jobs).forEach(pName => { if (jobs[pName].isProcessing && !jobs[pName].isPaused) { socketRef.current?.emit('pauseJob', { profileName: pName, jobType: 'ticket' }); setJobs((prev: any) => ({ ...prev, [pName]: { ...prev[pName], isPaused: true } })); } });
+            toast({ title: "Master Pause", description: "All active Desk jobs paused." });
+        } else if (path === '/projects-tasks') {
+            Object.keys(projectsJobs).forEach(pName => { if (projectsJobs[pName].isProcessing && !projectsJobs[pName].isPaused) { socketRef.current?.emit('pauseJob', { profileName: pName, jobType: 'projects' }); setProjectsJobs((prev: any) => ({ ...prev, [pName]: { ...prev[pName], isPaused: true } })); } });
+            toast({ title: "Master Pause", description: "All active Projects jobs paused." });
+        }
     };
 
     const handleResumeAll = () => {
         if (!socketRef.current) return;
-        Object.keys(jobs).forEach(profileName => {
-            const job = jobs[profileName];
-            if (job.isProcessing && job.isPaused) {
-                socketRef.current?.emit('resumeJob', { profileName, jobType: 'ticket' });
-                setJobs((prev: any) => ({ ...prev, [profileName]: { ...prev[profileName], isPaused: false } }));
-            }
-        });
-        toast({ title: "Master Resume Triggered", description: "All Desk jobs are running again!" });
+        const path = location.pathname;
+
+        if (path === '/') {
+            Object.keys(jobs).forEach(pName => { if (jobs[pName].isProcessing && jobs[pName].isPaused) { socketRef.current?.emit('resumeJob', { profileName: pName, jobType: 'ticket' }); setJobs((prev: any) => ({ ...prev, [pName]: { ...prev[pName], isPaused: false } })); } });
+            toast({ title: "Master Resume", description: "All Desk jobs are running again!" });
+        } else if (path === '/projects-tasks') {
+            Object.keys(projectsJobs).forEach(pName => { if (projectsJobs[pName].isProcessing && projectsJobs[pName].isPaused) { socketRef.current?.emit('resumeJob', { profileName: pName, jobType: 'projects' }); setProjectsJobs((prev: any) => ({ ...prev, [pName]: { ...prev[pName], isPaused: false } })); } });
+            toast({ title: "Master Resume", description: "All Projects jobs are running again!" });
+        }
     };
 
     const handleEndAll = () => {
         if (!socketRef.current) return;
-        if (!window.confirm("Are you sure you want to completely end ALL active jobs?")) return;
+        const path = location.pathname;
+        let activeJobs = false;
+
+        if (path === '/') activeJobs = Object.values(jobs).some((j: any) => j.isProcessing);
+        else if (path === '/projects-tasks') activeJobs = Object.values(projectsJobs).some((j: any) => j.isProcessing);
+
+        if (!activeJobs) return toast({ title: "N/A", description: "No active jobs to end." });
+        if (!window.confirm("Are you sure you want to completely end ALL active jobs on this page?")) return;
         
         abortStartAllRef.current = true; 
         
-        Object.keys(jobs).forEach(profileName => {
-            const job = jobs[profileName];
-            if (job.isProcessing) {
-                socketRef.current?.emit('endJob', { profileName, jobType: 'ticket' });
-                setJobs((prev: any) => ({ ...prev, [profileName]: { ...prev[profileName], isProcessing: false, isPaused: false } }));
-            }
-        });
-        toast({ title: "Master Stop Triggered", description: "All Desk jobs have been ended.", variant: "destructive" });
+        if (path === '/') {
+            Object.keys(jobs).forEach(pName => { if (jobs[pName].isProcessing) { socketRef.current?.emit('endJob', { profileName: pName, jobType: 'ticket' }); setJobs((prev: any) => ({ ...prev, [pName]: { ...prev[pName], isProcessing: false, isPaused: false } })); } });
+            toast({ title: "Master Stop", description: "All Desk jobs ended.", variant: "destructive" });
+        } else if (path === '/projects-tasks') {
+            Object.keys(projectsJobs).forEach(pName => { if (projectsJobs[pName].isProcessing) { socketRef.current?.emit('endJob', { profileName: pName, jobType: 'projects' }); setProjectsJobs((prev: any) => ({ ...prev, [pName]: { ...prev[pName], isProcessing: false, isPaused: false } })); } });
+            toast({ title: "Master Stop", description: "All Projects jobs ended.", variant: "destructive" });
+        }
     };
 
     return (
         <>
-            <BrowserRouter>
-                <Routes>
-                    <Route path="/" element={<Index jobs={jobs} setJobs={setJobs} socket={socketRef.current} createInitialJobState={createInitialJobState} onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} />} />
-                    <Route path="/single-ticket" element={<SingleTicket onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} />} />
-                    <Route path="/email-statics" element={<EmailStatics onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} />} />
-                    <Route path="/bulk-signup" element={<BulkSignup jobs={catalystJobs} setJobs={setCatalystJobs} socket={socketRef.current} createInitialJobState={createInitialCatalystJobState} onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} />} />
-                    <Route path="/catalyst-users" element={<CatalystUsers socket={socketRef.current} onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} />} />
-                    <Route path="/bulk-email" element={<BulkEmail jobs={emailJobs} setJobs={setEmailJobs} socket={socketRef.current} createInitialJobState={createInitialEmailJobState} onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} />} />
-                    <Route path="/qntrl-forms" element={<BulkQntrlCards jobs={qntrlJobs} setJobs={setQntrlJobs} socket={socketRef.current} createInitialJobState={createInitialQntrlJobState} onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} />} />
-                    <Route path="/people-forms" element={<PeopleForms jobs={peopleJobs} setJobs={setPeopleJobs} socket={socketRef.current} createInitialJobState={createInitialPeopleJobState} onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} />} />
-                    <Route path="/creator-forms" element={<CreatorForms jobs={creatorJobs} setJobs={setCreatorJobs} socket={socketRef.current} createInitialJobState={createInitialCreatorJobState} onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} />} />
-                    <Route path="/projects-tasks" element={<ProjectsTasksPage jobs={projectsJobs} setJobs={setProjectsJobs} socket={socketRef.current} createInitialJobState={createInitialProjectsJobState} onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} />} />
-                    <Route path="/bulk-webinar-registration" element={<BulkWebinarRegistration jobs={webinarJobs} setJobs={setWebinarJobs} socket={socketRef.current} createInitialJobState={createInitialWebinarJobState} onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} />} />
-                    <Route path="/bulk-fsm-contacts" element={<BulkContactsFsm jobs={fsmContactJobs} setJobs={setFsmContactJobs} createInitialJobState={createInitialFsmContactJobState} socket={socketRef.current} onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} />} />
-                    <Route path="/bulk-bookings" element={<BulkBookings jobs={bookingJobs} setJobs={setBookingJobs} createInitialJobState={createInitialBookingJobState} socket={socketRef.current} onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} profiles={[]} />} />
-                    <Route path="/appointment-manager" element={<AppointmentManager socket={socketRef.current} onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} jobs={jobs} />} />
-                    <Route path="/live-stats" element={
-                        <DashboardLayout onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} profiles={[]} selectedProfile={null} onProfileChange={() => {}} apiStatus={{ status: 'success', message: '' }} onShowStatus={() => {}} onManualVerify={() => {}} socket={socketRef.current} jobs={jobs}>
-                            <LiveStats jobs={jobs} invoiceJobs={invoiceJobs} catalystJobs={catalystJobs} emailJobs={emailJobs} qntrlJobs={qntrlJobs} peopleJobs={peopleJobs} creatorJobs={creatorJobs} projectsJobs={projectsJobs} webinarJobs={bookingJobs} bookingJobs={bookingJobs} />
-                        </DashboardLayout>
-                    } />
-                    <Route path="/speed-test" element={<SpeedTest />} />
-                    <Route path="*" element={<NotFound />} />
-                </Routes>
-            </BrowserRouter>
+            <Routes>
+                <Route path="/" element={<Index jobs={jobs} setJobs={setJobs} socket={socketRef.current} createInitialJobState={createInitialJobState} onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} />} />
+                <Route path="/single-ticket" element={<SingleTicket onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} />} />
+                <Route path="/email-statics" element={<EmailStatics onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} />} />
+                <Route path="/bulk-signup" element={<BulkSignup jobs={catalystJobs} setJobs={setCatalystJobs} socket={socketRef.current} createInitialJobState={createInitialCatalystJobState} onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} />} />
+                <Route path="/catalyst-users" element={<CatalystUsers socket={socketRef.current} onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} />} />
+                <Route path="/bulk-email" element={<BulkEmail jobs={emailJobs} setJobs={setEmailJobs} socket={socketRef.current} createInitialJobState={createInitialEmailJobState} onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} />} />
+                <Route path="/qntrl-forms" element={<BulkQntrlCards jobs={qntrlJobs} setJobs={setQntrlJobs} socket={socketRef.current} createInitialJobState={createInitialQntrlJobState} onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} />} />
+                <Route path="/people-forms" element={<PeopleForms jobs={peopleJobs} setJobs={setPeopleJobs} socket={socketRef.current} createInitialJobState={createInitialPeopleJobState} onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} />} />
+                <Route path="/creator-forms" element={<CreatorForms jobs={creatorJobs} setJobs={setCreatorJobs} socket={socketRef.current} createInitialJobState={createInitialCreatorJobState} onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} />} />
+                <Route path="/projects-tasks" element={<ProjectsTasksPage jobs={projectsJobs} setJobs={setProjectsJobs} socket={socketRef.current} createInitialJobState={createInitialProjectsJobState} onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} />} />
+                <Route path="/bulk-webinar-registration" element={<BulkWebinarRegistration jobs={webinarJobs} setJobs={setWebinarJobs} socket={socketRef.current} createInitialJobState={createInitialWebinarJobState} onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} />} />
+                <Route path="/bulk-fsm-contacts" element={<BulkContactsFsm jobs={fsmContactJobs} setJobs={setFsmContactJobs} createInitialJobState={createInitialFsmContactJobState} socket={socketRef.current} onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} />} />
+                <Route path="/bulk-bookings" element={<BulkBookings jobs={bookingJobs} setJobs={setBookingJobs} createInitialJobState={createInitialBookingJobState} socket={socketRef.current} onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} profiles={[]} />} />
+                <Route path="/appointment-manager" element={<AppointmentManager socket={socketRef.current} onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} jobs={jobs} />} />
+                <Route path="/live-stats" element={
+                    <DashboardLayout onAddProfile={handleOpenAddProfile} onEditProfile={handleOpenEditProfile} onDeleteProfile={handleDeleteProfile} profiles={[]} selectedProfile={null} onProfileChange={() => {}} apiStatus={{ status: 'success', message: '' }} onShowStatus={() => {}} onManualVerify={() => {}} socket={socketRef.current} jobs={jobs}>
+                        <LiveStats jobs={jobs} invoiceJobs={invoiceJobs} catalystJobs={catalystJobs} emailJobs={emailJobs} qntrlJobs={qntrlJobs} peopleJobs={peopleJobs} creatorJobs={creatorJobs} projectsJobs={projectsJobs} webinarJobs={bookingJobs} bookingJobs={bookingJobs} />
+                    </DashboardLayout>
+                } />
+                <Route path="/speed-test" element={<SpeedTest />} />
+                <Route path="*" element={<NotFound />} />
+            </Routes>
             
             <ProfileModal isOpen={isProfileModalOpen} onClose={() => setIsProfileModalOpen(false)} onSave={handleSaveProfile} profile={editingProfile} socket={socketRef.current} />
 
@@ -1113,9 +1125,11 @@ const MainApp = () => {
 const App = () => (
     <QueryClientProvider client={queryClient}>
         <TooltipProvider>
-            <Toaster />
-            <Sonner />
-            <MainApp />
+            <BrowserRouter>
+                <Toaster />
+                <Sonner />
+                <MainApp />
+            </BrowserRouter>
         </TooltipProvider>
     </QueryClientProvider>
 );
