@@ -70,6 +70,12 @@ export interface Profile {
   bookings?: {
     workspaceId: string;
   };
+  // --- NEW: TELL TYPESCRIPT ABOUT OUR RADAR IMAP EMAILS ---
+  imapSettings?: {
+    email: string;
+    password: string;
+    host: string;
+  }[];
 }
 
 export interface TicketFormData {
@@ -536,6 +542,11 @@ const MainApp = () => {
 
     const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
     const [editingProfile, setEditingProfile] = useState<Profile | null>(null);
+    
+    const [isStartingAll, setIsStartingAll] = useState(false);
+    
+    // 🛑 THE KILL SWITCH FOR START ALL LOOP
+    const abortStartAllRef = useRef(false); 
 
     useJobTimer(jobs, setJobs, 'ticket');
     useJobTimer(invoiceJobs, setInvoiceJobs, 'invoice');
@@ -549,7 +560,7 @@ const MainApp = () => {
     useJobTimer(fsmContactJobs, setFsmContactJobs, 'fsm-contact');
     useJobTimer(bookingJobs, setBookingJobs, 'bookings');
 
-    // 🚀 NEW: THE "BUCKET" REF FOR BATCHING SOCKET EVENTS
+    // 🚀 THE "BUCKET" REF FOR BATCHING SOCKET EVENTS
     const resultBuckets = useRef<any>({
         ticket: {}, invoice: {}, catalyst: {}, email: {}, qntrl: {}, people: {}, 
         creator: {}, projects: {}, webinar: {}, fsmContact: {}, bookings: {}
@@ -658,11 +669,9 @@ const MainApp = () => {
         
         // 🚀 BUCKET FILLERS: These just quietly save data in the background
         socket.on('ticketResult', (result: any) => {
-            // 1. Send the data to the batching bucket
             if (!resultBuckets.current.ticket[result.profileName]) resultBuckets.current.ticket[result.profileName] = [];
             resultBuckets.current.ticket[result.profileName].push({ ...result, timestamp: new Date() });
             
-            // 2. NEW FIX: Force the UI Countdown to start INSTANTLY so it matches the backend log perfectly!
             setJobs((prevJobs: any) => {
                 if (prevJobs[result.profileName] && prevJobs[result.profileName].formData) {
                     return {
@@ -748,7 +757,7 @@ const MainApp = () => {
                                     results: updatedResults,
                                     countdown: isLast ? 0 : defaultDelay,
                                 };
-                                bucketObj[profile] = []; // Empty the bucket
+                                bucketObj[profile] = []; 
                             }
                         }
                         return nextJobs;
@@ -768,10 +777,10 @@ const MainApp = () => {
             flushJobs(resultBuckets.current.fsmContact, setFsmContactJobs, createInitialFsmContactJobState);
             flushJobs(resultBuckets.current.bookings, setBookingJobs, createInitialBookingJobState);
 
-        }, 1000); // 1000ms = updates UI exactly 1 time per second
+        }, 1000); 
 
 
-        // Standard immediate updates (Not batched because they are rare/important)
+        // Standard immediate updates
         socket.on('ticketUpdate', (updateData) => {
           setJobs(prevJobs => {
             if (!prevJobs[updateData.profileName]) return prevJobs;
@@ -856,7 +865,7 @@ const MainApp = () => {
 
         return () => {
             document.removeEventListener("visibilitychange", handleWakeUp);
-            clearInterval(flushInterval); // VERY IMPORTANT: Stop the timer when component unmounts
+            clearInterval(flushInterval); 
             socket.disconnect();
         };
     }, [toast]);
@@ -906,10 +915,79 @@ const MainApp = () => {
             toast({ title: 'Error', description: 'Failed to delete profile.', variant: 'destructive' });
         }
     };
-	
-	// ⏸️ MASTER PAUSE (Pauses all Desk Ticket jobs)
+
+    // ==========================================
+    // 🚀 MASTER CONTROL LOGIC (START / PAUSE / RESUME / END)
+    // ==========================================
+
+    const handleStartAll = async () => {
+        if (!socketRef.current) return;
+        setIsStartingAll(true);
+        abortStartAllRef.current = false; // Reset the kill switch
+        let startedCount = 0;
+
+        // Find profiles to start based on the Desk Ticket jobs
+        const profilesToStart = Object.keys(jobs).filter(profileName => {
+            const job = jobs[profileName];
+            if (!job || job.isProcessing) return false;
+            const emailList = job.formData?.emails?.split('\n').map((e: string) => e.trim()).filter((e: string) => e !== '') || [];
+            return emailList.length > 0;
+        });
+
+        if (profilesToStart.length === 0) {
+            toast({ title: "Nothing to start", description: "No idle accounts with valid emails found." });
+            setIsStartingAll(false);
+            return;
+        }
+
+        toast({ title: "Starting Fleet...", description: `Initializing ${profilesToStart.length} accounts one by one.` });
+
+        for (const pName of profilesToStart) {
+            // CHECK THE KILL SWITCH! If End All was clicked, stop starting new ones!
+            if (abortStartAllRef.current) {
+                toast({ title: "Start Aborted", description: "Stopped initializing the rest of the fleet." });
+                break;
+            }
+
+            setJobs((prev: any) => {
+                const freshJob = prev[pName];
+                const emailList = freshJob.formData.emails.split('\n').map((e: string) => e.trim()).filter((e: string) => e !== '');
+                
+                socketRef.current?.emit('startBulkCreate', {
+                    ...freshJob.formData,
+                    emails: emailList,
+                    selectedProfileName: pName
+                });
+
+                return {
+                    ...prev,
+                    [pName]: {
+                        ...freshJob,
+                        results: [],
+                        isProcessing: true,
+                        isPaused: false,
+                        isComplete: false,
+                        processingStartTime: new Date(),
+                        totalTicketsToProcess: emailList.length,
+                        processingTime: 0
+                    }
+                };
+            });
+            startedCount++;
+            
+            // Wait 1.5 seconds before starting the next one
+            await new Promise(resolve => setTimeout(resolve, 1500)); 
+        }
+
+        if (!abortStartAllRef.current) {
+            toast({ title: "Fleet Started", description: `Successfully started ${startedCount} jobs.` });
+        }
+        setIsStartingAll(false);
+    };
+
     const handlePauseAll = () => {
         if (!socketRef.current) return;
+        abortStartAllRef.current = true; // Engage Kill Switch
         Object.keys(jobs).forEach(profileName => {
             const job = jobs[profileName];
             if (job.isProcessing && !job.isPaused) {
@@ -920,7 +998,6 @@ const MainApp = () => {
         toast({ title: "Master Pause Triggered", description: "All active Desk jobs have been paused." });
     };
 
-    // ▶️ MASTER RESUME (Resumes all Desk Ticket jobs)
     const handleResumeAll = () => {
         if (!socketRef.current) return;
         Object.keys(jobs).forEach(profileName => {
@@ -933,10 +1010,11 @@ const MainApp = () => {
         toast({ title: "Master Resume Triggered", description: "All Desk jobs are running again!" });
     };
 
-    // 🛑 MASTER END (Stops all Desk Ticket jobs)
     const handleEndAll = () => {
         if (!socketRef.current) return;
         if (!window.confirm("Are you sure you want to completely end ALL active jobs?")) return;
+        
+        abortStartAllRef.current = true; // Engage Kill Switch to stop the Start All loop instantly!
         
         Object.keys(jobs).forEach(profileName => {
             const job = jobs[profileName];
@@ -980,6 +1058,13 @@ const MainApp = () => {
 
             {/* 🚀 GLOBAL CONTROL PANEL */}
             <div className="fixed bottom-6 left-1/2 -translate-x-1/2 flex gap-3 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md p-3 rounded-full shadow-2xl border border-slate-200 dark:border-slate-800 z-[9999] transition-all">
+                <button 
+                    onClick={handleStartAll} 
+                    disabled={isStartingAll}
+                    className={`flex items-center text-xs font-bold text-white px-5 py-2.5 rounded-full shadow-md transition-transform hover:scale-105 ${isStartingAll ? 'bg-blue-400' : 'bg-blue-600 hover:bg-blue-700'}`}
+                >
+                    {isStartingAll ? '⏳ Starting...' : '🚀 Start All'}
+                </button>
                 <button 
                     onClick={handlePauseAll} 
                     className="flex items-center text-xs font-bold bg-yellow-500 hover:bg-yellow-600 text-white px-5 py-2.5 rounded-full shadow-md transition-transform hover:scale-105"

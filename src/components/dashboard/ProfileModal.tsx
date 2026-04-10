@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Profile } from '@/App';
 import { useToast } from '@/hooks/use-toast';
-import { KeyRound, Loader2, Building, Cloud, Network, UserSquare, AppWindow, FolderKanban, Search, Video, Wrench, Calendar, Trash2 } from 'lucide-react'; 
+import { KeyRound, Loader2, Building, Cloud, Network, UserSquare, AppWindow, FolderKanban, Search, Video, Wrench, Calendar, Trash2, Radar } from 'lucide-react'; 
 import { Socket } from 'socket.io-client';
 import { Separator } from '../ui/separator';
 import {
@@ -35,7 +35,7 @@ interface Portal {
   [key: string]: any; 
 }
 
-const getInitialFormData = (): Profile => ({
+const getInitialFormData = (): Profile & { imapSettings?: any[] } => ({
   profileName: '',
   clientId: '',
   clientSecret: '',
@@ -74,14 +74,21 @@ const getInitialFormData = (): Profile => ({
   },
   bookings: {
     workspaceId: ''
-  }
+  },
+  // --- NEW: IMAP TEST ACCOUNTS ---
+  imapSettings: [
+    { email: '', password: '', host: 'imap-mail.outlook.com' },
+    { email: '', password: '', host: 'imap-mail.outlook.com' },
+    { email: '', password: '', host: 'imap-mail.outlook.com' },
+    { email: '', password: '', host: 'imap-mail.outlook.com' }
+  ]
 });
 
 
 export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onSave, profile, socket }) => {
   const { toast } = useToast();
   const [isGenerating, setIsGenerating] = useState(false);
-  const [formData, setFormData] = useState<Profile>(getInitialFormData());
+  const [formData, setFormData] = useState<any>(getInitialFormData());
   
   // Use a ref to access the latest formData inside socket callbacks without stale closure issues
   const formDataRef = useRef(formData);
@@ -112,7 +119,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
   const [peopleOrgList, setPeopleOrgList] = useState<any[]>([]);
   const [isPeopleOrgModalOpen, setIsPeopleOrgModalOpen] = useState(false);
 
-  // 🚨 THE CACHE BUSTER HELPER: Forces the Node server to always grab fresh data!
+  // THE CACHE BUSTER HELPER: Forces the Node server to always grab fresh data!
   const getCacheBusterProfile = () => ({
       ...formDataRef.current,
       profileName: `temp_bypass_cache_${Date.now()}`
@@ -133,6 +140,8 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
                 meeting: { ...getInitialFormData().meeting, ...profile.meeting },
                 fsm: { ...getInitialFormData().fsm, ...profile.fsm },
                 bookings: { ...getInitialFormData().bookings, ...profile.bookings },
+                // Merge the saved IMAP settings, otherwise default to 4 empty slots
+                imapSettings: (profile as any).imapSettings?.length ? (profile as any).imapSettings : getInitialFormData().imapSettings
             });
         } else {
             setFormData(getInitialFormData());
@@ -144,7 +153,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
     if (!socket || !isOpen) return;
 
     const handleTokenReceived = (data: { refreshToken: string }) => {
-      setFormData(prev => ({ ...prev, refreshToken: data.refreshToken }));
+      setFormData((prev: any) => ({ ...prev, refreshToken: data.refreshToken }));
       setIsGenerating(false);
       toast({ title: "Success!", description: "Refresh token has been populated." });
     };
@@ -165,7 +174,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
 
         if (portals.length === 1) {
             const portalId = portals[0].id;
-            setFormData(prev => ({ 
+            setFormData((prev: any) => ({ 
                 ...prev, 
                 projects: { ...(prev.projects as object), portalId } 
             }));
@@ -192,9 +201,8 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
         }
         if (data.organizations.length === 1) {
             const org = data.organizations[0];
-            setFormData(prev => ({ ...prev, desk: { ...(prev.desk as object), orgId: org.id.toString() } }));
+            setFormData((prev: any) => ({ ...prev, desk: { ...(prev.desk as object), orgId: org.id.toString() } }));
             
-            // 🔥 Use Cache Buster Profile here too!
             socket.emit('getDeskDepartments', {
                 activeProfile: getCacheBusterProfile(),
                 orgId: org.id
@@ -214,9 +222,8 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
         }
         if (data.departments.length === 1) {
             const dep = data.departments[0];
-            setFormData(prev => ({ ...prev, desk: { ...(prev.desk as object), defaultDepartmentId: dep.id.toString() } }));
+            setFormData((prev: any) => ({ ...prev, desk: { ...(prev.desk as object), defaultDepartmentId: dep.id.toString() } }));
             
-            // 🔥 Use Cache Buster Profile here too!
             socket.emit('getDeskMailAddresses', {
                 activeProfile: getCacheBusterProfile(),
                 orgId: formDataRef.current.desk?.orgId || '',
@@ -237,7 +244,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
         }
         if (data.mailAddresses.length === 1) {
             const mail = data.mailAddresses[0];
-            setFormData(prev => ({ 
+            setFormData((prev: any) => ({ 
                 ...prev, 
                 desk: { ...(prev.desk as object), mailReplyAddressId: mail.id.toString(), fromEmailAddress: mail.address } 
             }));
@@ -262,7 +269,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
         }
         if (data.organizations.length === 1) {
             const org = data.organizations[0];
-            setFormData(prev => ({ ...prev, qntrl: { ...(prev.qntrl as object), orgId: org.org_domain } }));
+            setFormData((prev: any) => ({ ...prev, qntrl: { ...(prev.qntrl as object), orgId: org.org_domain } }));
             toast({ title: "Success!", description: `Qntrl Org ID auto-filled with ${org.org_domain}` });
         } else {
             setQntrlOrgList(data.organizations);
@@ -286,7 +293,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
         if (data.organizations.length === 1) {
             const org = data.organizations[0];
             const orgId = org.zoid || org.organizationId || org.id || org.Company || 'UNKNOWN_ID';
-            setFormData(prev => ({ ...prev, people: { ...(prev.people as object), orgId: orgId.toString() } }));
+            setFormData((prev: any) => ({ ...prev, people: { ...(prev.people as object), orgId: orgId.toString() } }));
             toast({ title: "Success!", description: `People Org ID auto-filled with: ${orgId}` });
         } else {
             setPeopleOrgList(data.organizations);
@@ -337,12 +344,12 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
+    setFormData((prev: any) => ({ ...prev, [name]: value }));
   };
 
   const handleNestedChange = (service: 'desk' | 'catalyst' | 'qntrl' | 'people' | 'creator' | 'projects' | 'meeting' | 'fsm' | 'bookings', e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
-    setFormData(prev => ({
+    setFormData((prev: any) => ({
         ...prev,
         [service]: {
             ...(prev[service] as object),
@@ -352,13 +359,23 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
   };
  
   const handleCreatorSelectChange = (name: string, value: string) => {
-    setFormData(prev => ({
+    setFormData((prev: any) => ({
         ...prev,
         creator: {
             ...(prev.creator as object),
             [name]: value,
         }
     }));
+  };
+
+  // --- NEW: HANDLE IMAP TEST ACCOUNT CHANGES ---
+  const handleImapChange = (index: number, field: string, value: string) => {
+    setFormData((prev: any) => {
+      const newImap = [...(prev.imapSettings || [])];
+      if (!newImap[index]) newImap[index] = { email: '', password: '', host: 'imap-mail.outlook.com' };
+      newImap[index][field] = value;
+      return { ...prev, imapSettings: newImap };
+    });
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -424,7 +441,6 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
     }
 
     setIsFetchingPortals(true);
-    // 🔥 Bypasses the cache!
     socket.emit('getProjectsPortals', {
         clientId: formData.clientId,
         clientSecret: formData.clientSecret,
@@ -439,7 +455,6 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
         return;
     }
     setIsFetchingDesk(true);
-    // 🔥 Completely bypasses the server memory cache!
     socket?.emit('getDeskOrganizations', {
         activeProfile: getCacheBusterProfile()
     });
@@ -451,7 +466,6 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
         return;
     }
     setIsFetchingQntrl(true);
-    // 🔥 Completely bypasses the server memory cache!
     socket?.emit('getQntrlOrganizations', {
         activeProfile: getCacheBusterProfile()
     });
@@ -463,7 +477,6 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
         return;
     }
     setIsFetchingPeople(true);
-    // 🔥 Completely bypasses the server memory cache!
     socket?.emit('getPeopleOrganizations', {
         activeProfile: getCacheBusterProfile()
     });
@@ -733,6 +746,41 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
 
           </div>
 
+          {/* --- NEW: IMAP RADAR SETTINGS SECTION --- */}
+          <Separator className="my-6" />
+          <div>
+            <h4 className="text-lg font-semibold mb-2 flex items-center text-indigo-500">
+              <Radar className="h-5 w-5 mr-2" />
+              Inbox Radar (IMAP Test Accounts)
+            </h4>
+            <p className="text-sm text-muted-foreground mb-4">
+              Add up to 4 Outlook/Hotmail accounts to test inbox placement specifically for this Zoho account. Ensure you use an <strong>App Password</strong>, not your regular password!
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              {[0, 1, 2, 3].map(idx => (
+                <div key={idx} className="p-4 border border-border rounded-lg bg-muted/20 space-y-3 shadow-sm">
+                  <Label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
+                    Test Inbox {idx + 1}
+                  </Label>
+                  <div className="space-y-3">
+                    <Input
+                      placeholder="test@outlook.com"
+                      value={formData.imapSettings?.[idx]?.email || ''}
+                      onChange={e => handleImapChange(idx, 'email', e.target.value)}
+                      className="bg-card"
+                    />
+                    <Input
+                      type="password"
+                      placeholder="App Password"
+                      value={formData.imapSettings?.[idx]?.password || ''}
+                      onChange={e => handleImapChange(idx, 'password', e.target.value)}
+                      className="bg-card"
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
 
           <DialogFooter className="pt-8">
             <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
@@ -749,7 +797,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
         onClose={() => setIsPortalModalOpen(false)}
         portals={portalList}
         onSelect={(portalId) => {
-            setFormData(prev => ({ 
+            setFormData((prev: any) => ({ 
                 ...prev, 
                 projects: { ...(prev.projects as object), portalId } 
             }));
@@ -765,7 +813,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
         items={deskOrgList}
         displayKey="companyName"
         onSelect={(org) => {
-            setFormData(prev => ({ ...prev, desk: { ...(prev.desk as object), orgId: org.id.toString() } }));
+            setFormData((prev: any) => ({ ...prev, desk: { ...(prev.desk as object), orgId: org.id.toString() } }));
             setIsDeskOrgModalOpen(false);
             setIsFetchingDesk(true);
             socket?.emit('getDeskDepartments', {
@@ -783,7 +831,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
         items={deskDepList}
         displayKey="name"
         onSelect={(dep) => {
-            setFormData(prev => ({ ...prev, desk: { ...(prev.desk as object), defaultDepartmentId: dep.id.toString() } }));
+            setFormData((prev: any) => ({ ...prev, desk: { ...(prev.desk as object), defaultDepartmentId: dep.id.toString() } }));
             setIsDeskDepModalOpen(false);
             setIsFetchingDesk(true);
             socket?.emit('getDeskMailAddresses', {
@@ -802,7 +850,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
         items={deskMailList}
         displayKey="address"
         onSelect={(mail) => {
-            setFormData(prev => ({ 
+            setFormData((prev: any) => ({ 
                 ...prev, 
                 desk: { ...(prev.desk as object), mailReplyAddressId: mail.id.toString(), fromEmailAddress: mail.address } 
             }));
@@ -819,7 +867,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
         items={qntrlOrgList}
         displayKey="org_name"
         onSelect={(org) => {
-            setFormData(prev => ({ ...prev, qntrl: { ...(prev.qntrl as object), orgId: org.org_domain } }));
+            setFormData((prev: any) => ({ ...prev, qntrl: { ...(prev.qntrl as object), orgId: org.org_domain } }));
             setIsQntrlOrgModalOpen(false);
             toast({ title: "Success!", description: `Qntrl Org ID filled with ${org.org_domain}` });
         }}
@@ -834,7 +882,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onS
         displayKey="Company"
         onSelect={(org) => {
             const orgId = org.zoid || org.organizationId || org.id || org.Company || 'UNKNOWN_ID';
-            setFormData(prev => ({ ...prev, people: { ...(prev.people as object), orgId: orgId.toString() } }));
+            setFormData((prev: any) => ({ ...prev, people: { ...(prev.people as object), orgId: orgId.toString() } }));
             setIsPeopleOrgModalOpen(false);
             toast({ title: "Success!", description: `People Org ID filled with ${orgId}` });
         }}

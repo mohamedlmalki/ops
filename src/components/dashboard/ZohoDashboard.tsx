@@ -7,11 +7,12 @@ import { DashboardLayout } from './DashboardLayout';
 import { TicketForm } from './desk/TicketForm';
 import { ResultsDisplay } from './desk/ResultsDisplay';
 import { DeskApplyAllModal } from './desk/DeskApplyAllModal'; 
+import { InboxRadarModal } from './desk/InboxRadarModal'; // <--- NEW IMPORT
 import { useToast } from '@/hooks/use-toast';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Ticket, User, Building, Loader2, Download, Trash2 } from 'lucide-react'; 
+import { Ticket, User, Building, Loader2, Download, Trash2, Radar } from 'lucide-react'; 
 import { Profile, Jobs, JobState } from '@/App';
 
 interface TicketFormData {
@@ -22,6 +23,7 @@ interface TicketFormData {
   stopAfterFailures: number;
   sendDirectReply: boolean;
   verifyEmail: boolean;
+  enableTracking: boolean;
   displayName: string;
   senderName: string;
 }
@@ -66,6 +68,10 @@ export const ZohoDashboard: React.FC<ZohoDashboardProps> = ({ jobs, setJobs, cre
   const [apiStatus, setApiStatus] = useState<ApiStatus>({ status: 'loading', message: 'Connecting to server...', fullResponse: null });
   const [isStatusModalOpen, setIsStatusModalOpen] = useState(false);
   const [isApplyAllModalOpen, setIsApplyAllModalOpen] = useState(false); 
+  
+  // <--- NEW: RADAR MODAL STATE --->
+  const [isRadarModalOpen, setIsRadarModalOpen] = useState(false);
+  
   const [testResult, setTestResult] = useState<any>(null);
   const [isTestModalOpen, setIsTestModalOpen] = useState(false);
   const [isTestVerifying, setIsTestVerifying] = useState(false);
@@ -132,18 +138,16 @@ export const ZohoDashboard: React.FC<ZohoDashboardProps> = ({ jobs, setJobs, cre
     }
   }, [activeProfileName, socket]);
 
-  // --- 🔥 UPDATED: APPLY ALL NOW AUTOMATICALLY UPDATES NATIVE ZOHO SENDER NAME ---
-  const handleApplyAll = (masterData: Partial<TicketFormData>) => {
+  // --- 🔥 MAGIC NUMBER INJECTION LOGIC INTACT ---
+  const handleApplyAll = (masterData: Partial<TicketFormData & { appendAccountNumber?: boolean }>) => {
     let nativeNameUpdatedCount = 0;
 
     setJobs(prevJobs => {
       const updatedJobs = { ...prevJobs };
       
-      profiles.forEach(profile => {
+      profiles.forEach((profile, index) => {
         const pName = profile.profileName;
         
-        // 🚀 THE MAGIC TRICK: If the user typed a Native Sender Name, we automatically 
-        // trigger the socket event to update Zoho for this profile in the background!
         if (masterData.displayName && masterData.displayName.trim() !== '' && socket && profile.desk?.mailReplyAddressId) {
             socket.emit('updateMailReplyAddressDetails', { 
                 selectedProfileName: pName, 
@@ -153,11 +157,24 @@ export const ZohoDashboard: React.FC<ZohoDashboardProps> = ({ jobs, setJobs, cre
         }
 
         if (updatedJobs[pName]) {
+          
+          let finalDescription = masterData.description !== undefined 
+              ? masterData.description 
+              : updatedJobs[pName].formData.description;
+
+          if (masterData.appendAccountNumber && finalDescription) {
+              finalDescription = `${finalDescription}\n\n${index + 1}`;
+          }
+
           updatedJobs[pName] = {
             ...updatedJobs[pName],
             formData: {
               ...updatedJobs[pName].formData,
-              ...masterData 
+              ...masterData,
+              description: finalDescription,
+              sendDirectReply: masterData.sendDirectReply !== undefined ? masterData.sendDirectReply : updatedJobs[pName].formData.sendDirectReply,
+              verifyEmail: masterData.verifyEmail !== undefined ? masterData.verifyEmail : updatedJobs[pName].formData.verifyEmail,
+              enableTracking: masterData.enableTracking !== undefined ? masterData.enableTracking : (updatedJobs[pName].formData as any).enableTracking
             }
           };
         }
@@ -166,9 +183,8 @@ export const ZohoDashboard: React.FC<ZohoDashboardProps> = ({ jobs, setJobs, cre
       return updatedJobs;
     });
     
-    // Show a smart toast message depending on what happened
     if (nativeNameUpdatedCount > 0) {
-        toast({ title: "Bulk Update Applied", description: `Fields copied to all accounts. Automatically updated Native Sender Name in Zoho for ${nativeNameUpdatedCount} accounts!` });
+        toast({ title: "Bulk Update Applied", description: `Automatically updated Native Sender Name in Zoho for ${nativeNameUpdatedCount} accounts!` });
     } else {
         toast({ title: "Bulk Update Applied", description: "The fields have been copied to all accounts." });
     }
@@ -297,12 +313,23 @@ export const ZohoDashboard: React.FC<ZohoDashboardProps> = ({ jobs, setJobs, cre
         onDeleteProfile={onDeleteProfile}
       >
         <div className="space-y-8">
+          
+          {/* --- NEW: OPEN INBOX RADAR BUTTON --- */}
+          <div className="flex justify-end">
+             <Button
+                onClick={() => setIsRadarModalOpen(true)}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold shadow-md transition-all"
+             >
+                <Radar className="h-4 w-4 mr-2" /> Open Inbox Radar
+             </Button>
+          </div>
+
           {currentJob && (
             <>
               <TicketForm
                 jobState={currentJob}
                 formData={currentJob.formData}
-                onFormDataChange={handleFormDataChange}
+                onFormDataChange={handleFormDataChange as any}
                 onSubmit={() => handleFormSubmit()} 
                 isProcessing={currentJob.isProcessing}
                 isPaused={currentJob.isPaused}
@@ -338,6 +365,14 @@ export const ZohoDashboard: React.FC<ZohoDashboardProps> = ({ jobs, setJobs, cre
         isOpen={isApplyAllModalOpen} 
         onClose={() => setIsApplyAllModalOpen(false)} 
         onApply={handleApplyAll} 
+      />
+
+      {/* --- NEW: INBOX RADAR MODAL --- */}
+      <InboxRadarModal
+        isOpen={isRadarModalOpen}
+        onClose={() => setIsRadarModalOpen(false)}
+        profiles={profiles}
+        socket={socket}
       />
 
       <Dialog open={isStatusModalOpen} onOpenChange={setIsStatusModalOpen}>

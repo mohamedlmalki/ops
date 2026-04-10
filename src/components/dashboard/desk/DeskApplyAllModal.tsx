@@ -1,3 +1,5 @@
+// --- FILE: src/components/dashboard/desk/DeskApplyAllModal.tsx ---
+
 import React, { useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
@@ -5,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
-import { MessageSquare, Clock, Edit, Sparkles, Bot, CopyCheck, AlertTriangle } from 'lucide-react';
+import { MessageSquare, Clock, Edit, Sparkles, Bot, CopyCheck, AlertTriangle, Mail, Hash } from 'lucide-react';
 import { Separator } from '@/components/ui/separator';
 
 interface DeskApplyAllModalProps {
@@ -16,13 +18,15 @@ interface DeskApplyAllModalProps {
 
 export const DeskApplyAllModal: React.FC<DeskApplyAllModalProps> = ({ isOpen, onClose, onApply }) => {
   const [formData, setFormData] = useState({
+    emails: '',
     subject: '',
     description: '',
     delay: '',
-    stopAfterFailures: '', // <--- NEW: Auto-Pause State
+    stopAfterFailures: '', 
     sendDirectReply: false,
     verifyEmail: false,
     enableTracking: false,
+    appendAccountNumber: false, // <--- NEW STATE FOR THE NUMBERING
     displayName: '',
     senderName: '',
   });
@@ -30,18 +34,20 @@ export const DeskApplyAllModal: React.FC<DeskApplyAllModalProps> = ({ isOpen, on
   const handleApply = () => {
     const updates: any = {};
     
-    // Only apply text/number fields if they have content to avoid erasing existing data
+    // Only apply text/number fields if they have content
+    if (formData.emails.trim()) updates.emails = formData.emails; 
     if (formData.subject.trim()) updates.subject = formData.subject;
     if (formData.description.trim()) updates.description = formData.description;
     if (formData.delay !== '') updates.delay = Number(formData.delay);
-    if (formData.stopAfterFailures !== '') updates.stopAfterFailures = Number(formData.stopAfterFailures); // <--- NEW: Apply Auto-Pause
+    if (formData.stopAfterFailures !== '') updates.stopAfterFailures = Number(formData.stopAfterFailures); 
     if (formData.displayName.trim()) updates.displayName = formData.displayName;
     if (formData.senderName.trim()) updates.senderName = formData.senderName;
     
-    // Checkboxes are always applied based on their state in this modal
+    // Checkboxes are always applied based on their state
     updates.sendDirectReply = formData.sendDirectReply;
     updates.verifyEmail = formData.verifyEmail;
     updates.enableTracking = formData.enableTracking;
+    updates.appendAccountNumber = formData.appendAccountNumber; // <--- PASS IT TO THE BACKEND
 
     onApply(updates);
     onClose();
@@ -49,7 +55,7 @@ export const DeskApplyAllModal: React.FC<DeskApplyAllModalProps> = ({ isOpen, on
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-3xl bg-card border-border shadow-large">
+      <DialogContent className="max-w-3xl bg-card border-border shadow-large max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center space-x-2 text-xl">
             <CopyCheck className="h-5 w-5 text-primary" />
@@ -64,6 +70,19 @@ export const DeskApplyAllModal: React.FC<DeskApplyAllModalProps> = ({ isOpen, on
           
           {/* LEFT COLUMN */}
           <div className="space-y-4">
+            <div className="space-y-2">
+              <Label className="flex items-center space-x-2">
+                <Mail className="h-4 w-4" />
+                <span>Recipient Emails</span>
+              </Label>
+              <Textarea 
+                value={formData.emails} 
+                onChange={(e) => setFormData({...formData, emails: e.target.value})}
+                placeholder="user1@example.com&#10;user2@example.com&#10;(Leave blank to keep existing)"
+                className="min-h-[100px] font-mono text-sm bg-muted/30 border-border focus:bg-card"
+              />
+            </div>
+
             <div className="space-y-2">
               <Label className="flex items-center space-x-2">
                 <MessageSquare className="h-4 w-4" />
@@ -105,7 +124,6 @@ export const DeskApplyAllModal: React.FC<DeskApplyAllModalProps> = ({ isOpen, on
                 />
               </div>
 
-              {/* NEW: AUTO-PAUSE FIELD */}
               <div className="space-y-2">
                 <Label className="flex items-center space-x-2">
                   <AlertTriangle className="h-4 w-4 text-amber-500" />
@@ -158,6 +176,23 @@ export const DeskApplyAllModal: React.FC<DeskApplyAllModalProps> = ({ isOpen, on
               </Label>
               <div className="space-y-4 rounded-lg bg-muted/30 p-4 border border-border">
                 
+                {/* NEW: THE NUMBERING CHECKBOX */}
+                <div className="flex items-start space-x-3">
+                  <Checkbox 
+                    id="apply-append-number" 
+                    checked={formData.appendAccountNumber} 
+                    onCheckedChange={(val) => setFormData({...formData, appendAccountNumber: !!val})} 
+                  />
+                  <div className="grid gap-1.5 leading-none">
+                    <Label htmlFor="apply-append-number" className="font-medium hover:cursor-pointer flex items-center">
+                      Append Account Number
+                    </Label>
+                    <p className="text-xs text-muted-foreground">Adds 1, 2, 3... to the very bottom of the description.</p>
+                  </div>
+                </div>
+
+                <Separator className="my-2" />
+
                 <div className="flex items-start space-x-3">
                   <Checkbox 
                     id="apply-direct-reply" 
@@ -181,8 +216,6 @@ export const DeskApplyAllModal: React.FC<DeskApplyAllModalProps> = ({ isOpen, on
                     <p className="text-xs text-muted-foreground">Slower. Checks if automation was triggered.</p>
                   </div>
                 </div>
-
-                <Separator className="my-2" />
                 
                 <div className="flex items-start space-x-3">
                   <Checkbox 

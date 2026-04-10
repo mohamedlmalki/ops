@@ -202,7 +202,29 @@
     },
     "bookings": {
       "workspaceId": ""
-    }
+    },
+    "imapSettings": [
+      {
+        "email": "med217623@gmail.com",
+        "password": "gljg dile qkot rrwo",
+        "host": "imap.gmail.com"
+      },
+      {
+        "email": "imap.gmail.com",
+        "password": "",
+        "host": "imap.gmail.com"
+      },
+      {
+        "email": "",
+        "password": "",
+        "host": "imap.gmail.com"
+      },
+      {
+        "email": "",
+        "password": "",
+        "host": "imap.gmail.com"
+      }
+    ]
   },
   {
     "profileName": "6",

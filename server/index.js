@@ -20,6 +20,7 @@ const fsmHandler = require('./fsm-handler');
 const bookingsHandler = require('./bookings-handler'); 
 const ORDER_FILE = path.join(__dirname, "sidebar-order.json");
 require('dotenv').config();
+const { scanImapAccount } = require('./imap-handler');
 
 const { ticketQueueEvents, ticketQueue } = require('./queue');
 const workerManager = require('./worker'); // Starts the background factory worker and saves it
@@ -588,6 +589,117 @@ io.on('connection', (socket) => {
         if (activeProfile) { bookingsHandler.handleUpdateBookingStaff(liveSocket, { ...data, activeProfile }); } 
         else { socket.emit('updateBookingStaffResult', { success: false, error: "Profile not found." }); }
     });
+	
+	
+	
+	socket.on('triggerInboxRadar', async (data) => {
+    try {
+        const { profiles } = data; 
+        const fs = require('fs');
+        const profilesData = JSON.parse(fs.readFileSync('./profiles.json', 'utf8'));
+
+        const searchTargets = profiles.map(pName => {
+            const profile = profilesData.find(p => p.profileName === pName);
+            const fromEmail = profile?.desk?.fromEmailAddress?.toLowerCase() || '';
+            return {
+                profileName: pName,
+                tag: `[radar-${pName.toLowerCase()}]`,
+                email: fromEmail 
+            };
+        });
+
+        // 1. X-Ray Scan to find Unique Accounts to test
+        let uniqueTestAccounts = [];
+        profilesData.forEach(p => {
+            if (p.imapSettings && Array.isArray(p.imapSettings)) {
+                p.imapSettings.forEach(imap => {
+                    if (imap.email && typeof imap.email === 'string') {
+                        // Extract every valid email pattern
+                        const emailsFound = imap.email.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g) || [];
+                        
+                        emailsFound.forEach(singleEmail => {
+                            const lowerEmail = singleEmail.toLowerCase();
+                            if (!uniqueTestAccounts.find(a => a.email.toLowerCase() === lowerEmail)) {
+                                uniqueTestAccounts.push({
+                                    email: lowerEmail,
+                                    password: imap.password,
+                                    host: imap.host
+                                });
+                            }
+                        });
+                    }
+                });
+            }
+        });
+
+        if (uniqueTestAccounts.length === 0) {
+            socket.emit('bulkError', { profileName: 'System', message: 'No valid IMAP Test Accounts found.' });
+            return;
+        }
+
+        // 2. Initialize Matrix Scores with exact Regex count
+        let finalMatrixScores = {};
+        profiles.forEach(pName => {
+            const profile = profilesData.find(p => p.profileName === pName);
+            
+            const totalConfigured = profile?.imapSettings?.reduce((total, s) => {
+                if (!s.email) return total;
+                const emailsFound = s.email.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g);
+                return total + (emailsFound ? emailsFound.length : 0);
+            }, 0) || 0;
+            
+            finalMatrixScores[pName] = { 
+                inbox: 0, 
+                spam: 0, 
+                missing: 0,
+                expected: totalConfigured 
+            };
+        });
+
+        // 3. Send the Detective
+        for (const imapAcc of uniqueTestAccounts) {
+            const scanResults = await scanImapAccount(imapAcc, searchTargets); 
+            
+            const uniqueInboxHits = [...new Set(scanResults.foundInInbox)];
+            const uniqueSpamHits = [...new Set(scanResults.foundInSpam)];
+
+            // 4. THE MAGIC MULTIPLIER (Using Regex extraction)
+            profiles.forEach(pName => {
+                const profile = profilesData.find(p => p.profileName === pName);
+                
+                const multiplier = profile?.imapSettings?.reduce((total, s) => {
+                    if (!s.email) return total;
+                    const emailsFound = s.email.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g) || [];
+                    return total + emailsFound.filter(e => e.toLowerCase() === imapAcc.email.toLowerCase()).length;
+                }, 0) || 0;
+
+                if (multiplier > 0) {
+                    if (uniqueInboxHits.includes(pName)) {
+                        finalMatrixScores[pName].inbox += multiplier;   
+                    } else if (uniqueSpamHits.includes(pName)) {
+                        finalMatrixScores[pName].spam += multiplier;    
+                    }
+                }
+            });
+        }
+
+        // 5. Final Math Cleanup
+        profiles.forEach(pName => {
+            const stats = finalMatrixScores[pName];
+            const totalFound = stats.inbox + stats.spam;
+            stats.missing = Math.max(0, stats.expected - totalFound);
+        });
+
+        socket.emit('radarScanComplete', { results: finalMatrixScores });
+
+    } catch (error) {
+        console.error("Radar Error:", error);
+        socket.emit('bulkError', { profileName: 'System', message: 'Radar Scan failed.' });
+    }
+});
+	
+	
+	
 });
 
 const fsPromises = require('fs').promises;
