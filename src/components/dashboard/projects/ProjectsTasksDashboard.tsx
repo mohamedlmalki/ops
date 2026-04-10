@@ -10,7 +10,7 @@ import { ProjectsJobs, ProjectsJobState, ZohoProject, ZohoTask } from './Project
 import { TaskBulkForm } from './TaskBulkForm'; 
 import { TaskResultsDisplay } from './TaskResultsDisplay';
 import { TaskProgressTable } from './TaskProgressTable';
-import { TrackingAnalytics } from '../desk/TrackingAnalytics'; // 🚨 IMPORTED THE TRACKER
+import { TrackingAnalytics } from '../desk/TrackingAnalytics'; 
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Loader2, Trash2, Clock, CheckCircle2, XCircle, RefreshCw, Activity } from 'lucide-react'; 
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -56,7 +56,6 @@ interface ProjectsTasksDashboardProps {
 
 const SERVER_URL = "http://localhost:3000";
 
-// --- GLOBAL MEMORY CACHE ---
 const globalMemoryCache = {
     tasks: [] as ZohoTask[],
     deleteStates: {} as Record<string, ProjectsDeleteJobState>,
@@ -78,7 +77,7 @@ export const ProjectsTasksDashboard: React.FC<ProjectsTasksDashboardProps> = ({
 
   const [apiStatus, setApiStatus] = useState<ApiStatus>({ status: 'loading', message: 'Connecting to server...', fullResponse: null });
   const [isStatusModalOpen, setIsStatusModalOpen] = useState(false);
-  const [isAnalyticsOpen, setIsAnalyticsOpen] = useState(false); // 🚨 ANALYTICS DRAWER STATE
+  const [isAnalyticsOpen, setIsAnalyticsOpen] = useState(false); 
   
   const [projects, setProjects] = useState<ZohoProject[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
@@ -357,7 +356,6 @@ export const ProjectsTasksDashboard: React.FC<ProjectsTasksDashboardProps> = ({
       >
         <div className="space-y-6">
             
-            {/* 🚨 ADDED ANALYTICS BUTTON NEXT TO TITLE */}
             <div className="flex items-center justify-between">
                 <h1 className="text-3xl font-bold tracking-tight">{title}</h1>
                 <Button 
@@ -378,6 +376,7 @@ export const ProjectsTasksDashboard: React.FC<ProjectsTasksDashboardProps> = ({
                     
                     <TabsContent value="bulk-create">
                         <div className="space-y-6">
+                            
                             <TaskBulkForm
                                 selectedProfileName={activeProfileName} projects={projects} socket={socket} jobState={jobState} setJobs={setJobs}
                                 createInitialJobState={createInitialJobState} autoTaskListId={autoTaskListId} selectedProjectId={selectedProjectId}
@@ -509,7 +508,6 @@ export const ProjectsTasksDashboard: React.FC<ProjectsTasksDashboardProps> = ({
         </DialogContent>
       </Dialog>
 
-      {/* 🚨 MOUNTED THE TRACKING ANALYTICS DRAWER HERE */}
       <TrackingAnalytics 
           isOpen={isAnalyticsOpen} 
           onClose={() => setIsAnalyticsOpen(false)} 

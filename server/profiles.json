@@ -28,7 +28,7 @@
     },
     "projects": {
       "portalId": "919958475",
-      "cloudflareTrackingUrl": ""
+      "cloudflareTrackingUrl": "https://ymn-trc3-waterfall-b1d2.clarckawdee.workers.dev"
     },
     "meeting": {
       "zsoid": ""
@@ -38,7 +38,29 @@
     },
     "bookings": {
       "workspaceId": ""
-    }
+    },
+    "imapSettings": [
+      {
+        "email": "",
+        "password": "",
+        "host": "imap-mail.outlook.com"
+      },
+      {
+        "email": "",
+        "password": "",
+        "host": "imap-mail.outlook.com"
+      },
+      {
+        "email": "",
+        "password": "",
+        "host": "imap-mail.outlook.com"
+      },
+      {
+        "email": "",
+        "password": "",
+        "host": "imap-mail.outlook.com"
+      }
+    ]
   },
   {
     "profileName": "2",

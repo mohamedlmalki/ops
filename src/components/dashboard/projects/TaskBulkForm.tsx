@@ -7,9 +7,9 @@ import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import { Switch } from '@/components/ui/switch'; // 🚨 IMPORTED SWITCH
+import { Switch } from '@/components/ui/switch'; 
 import { ProjectsJobState, ZohoProject, ProjectsFormData, ProjectsJobs } from './ProjectsDataTypes';
-import { Loader2, Play, Pause, Square, ListFilterIcon, ImagePlus, Eye, Save, Upload, List, CheckCircle2, XCircle, Hash, AlertTriangle, Plus, RefreshCw, Trash2, Activity } from 'lucide-react';
+import { Loader2, Play, Pause, Square, ListFilterIcon, ImagePlus, Eye, Save, Upload, List, CheckCircle2, XCircle, Hash, AlertTriangle, Plus, RefreshCw, Trash2, Activity, CopyCheck } from 'lucide-react';
 import { Socket } from 'socket.io-client';
 import {
     DropdownMenu,
@@ -29,6 +29,7 @@ import {
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 import { SmartTextSplitter } from './SmartTextSplitter';
+import { ProjectsApplyAllModal } from './ProjectsApplyAllModal';
 
 interface TaskLayoutField {
     column_name: string;
@@ -230,11 +231,14 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
   const [allFields, setAllFields] = useState<TaskLayoutField[]>([]);
   const [visibleFields, setVisibleFields] = useState<Record<string, boolean>>({});
   const [isLoadingLayout, setIsLoadingLayout] = useState(false);
+  
+  const [isApplyModalOpen, setIsApplyModalOpen] = useState(false);
 
   const stopAfterFailures = (jobState.formData as any).stopAfterFailures || 4;
-  const enableTracking = (jobState.formData as any).enableTracking || false; // 🚨 ADDED TRACKING STATE
+  const enableTracking = (jobState.formData as any).enableTracking || false; 
+  const appendAccountNumber = (jobState.formData as any).appendAccountNumber || false;
 
-  const handleFormDataChange = useCallback((field: keyof ProjectsFormData | 'stopAfterFailures' | 'enableTracking', value: any) => {
+  const handleFormDataChange = useCallback((field: keyof ProjectsFormData | 'stopAfterFailures' | 'enableTracking' | 'appendAccountNumber', value: any) => {
     if (!selectedProfileName) return;
 
     setJobs((prev) => {
@@ -368,7 +372,6 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
     }
   }, [allFields, jobState.formData.primaryField, handleFormDataChange]); 
 
-
   useEffect(() => {
       if (!socket || !selectedProfileName) return;
       
@@ -389,9 +392,10 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
                   ...jobState.formData,
                   primaryValues: remainingTasks.join('\n'), 
                   tasklistId: autoTaskListId,
-                  displayName: selectedProfileName,
+                  displayName: currentProjectName,
                   stopAfterFailures: stopAfterFailures,
-                  enableTracking: enableTracking // 🚨 ADDED
+                  enableTracking: enableTracking,
+                  appendAccountNumber: appendAccountNumber
               };
 
               setJobs((prev: any) => ({
@@ -411,8 +415,28 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
       
       socket.on('requestJobRecovery', onRecovery);
       return () => { socket.off('requestJobRecovery', onRecovery); };
-  }, [socket, selectedProfileName, jobState.formData, results.length, autoTaskListId, stopAfterFailures, enableTracking, projects]);
+  }, [socket, selectedProfileName, jobState.formData, results.length, autoTaskListId, stopAfterFailures, enableTracking, appendAccountNumber, projects, currentProjectName]);
 
+  const handleApplyToAll = (updates: any) => {
+    if (updates.displayName !== undefined) {
+        setCurrentProjectName(updates.displayName);
+        handleFormDataChange('displayName', updates.displayName);
+    }
+
+    setJobs((prev: any) => {
+      const next = { ...prev };
+      Object.keys(next).forEach(profileName => {
+        if (profileName !== selectedProfileName) {
+            next[profileName] = {
+            ...next[profileName],
+            formData: { ...next[profileName].formData, ...updates }
+            };
+        }
+      });
+      return next;
+    });
+    toast({ title: "Settings Applied Successfully!" });
+  };
 
   const handleStart = () => {
     const { projectId, primaryValues, delay } = jobState.formData; 
@@ -452,9 +476,10 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
     const formData: ProjectsFormData = {
       ...jobState.formData, 
       tasklistId: autoTaskListId, 
-      displayName: selectedProfileName,
+      displayName: currentProjectName, 
       stopAfterFailures: stopAfterFailures,
-      enableTracking: enableTracking // 🚨 ADDED
+      enableTracking: enableTracking,
+      appendAccountNumber: appendAccountNumber 
     };
 
     setJobs((prevJobs: any) => ({
@@ -655,6 +680,16 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
                                 }
                             }} 
                         />
+                        
+                        <Button 
+                            variant="outline" 
+                            size="sm"
+                            onClick={() => setIsApplyModalOpen(true)} 
+                            className="border-purple-200 text-purple-700 hover:bg-purple-50"
+                            disabled={isLoadingLayout || isProcessing}
+                        >
+                            <CopyCheck className="w-4 h-4 mr-2" /> Apply All
+                        </Button>
                     </>
                 )}
             </div>
@@ -666,10 +701,9 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
       <CardContent>
         <div className="grid gap-4">
           
-          {/* 🚨 ADDED THE TRACKING TOGGLE INTO THE TOP GRID */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-4">
             
-            <div className="grid gap-2">
+            <div className="grid gap-2 col-span-1 lg:col-span-2">
                 <Label htmlFor="projectName">Active Project Name</Label>
                 <div className="flex space-x-2">
                     <Input
@@ -677,13 +711,13 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
                         value={currentProjectName}
                         onChange={(e) => setCurrentProjectName(e.target.value)}
                         placeholder={"Select a project"}
-                        disabled={isUpdatingName || !selectedProjectId}
+                        disabled={isUpdatingName} 
                     />
                     <Button
                         variant="default"
                         size="icon"
-                        onClick={handleUpdateProjectName}
-                        disabled={isUpdatingName || !selectedProjectId}
+                        onClick={(e) => { e.preventDefault(); handleUpdateProjectName(); }}
+                        disabled={isUpdatingName}
                     >
                         {isUpdatingName ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                     </Button>
@@ -713,22 +747,16 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
             <div className="grid gap-2">
                 <div className="flex justify-between items-center">
                     <Label htmlFor="tasklistId" className={!autoTaskListId ? 'text-red-500 font-bold' : ''}>
-                        {autoTaskListId ? 'Task List ID (Auto)' : '⚠️ Missing Task List ID'}
+                        {autoTaskListId ? 'Task List ID' : '⚠️ Missing Task List'}
                     </Label>
                 </div>
                 <Input
                     id="tasklistId"
                     readOnly
                     value={autoTaskListId || ''}
-                    placeholder="Requires Refresh from 'View Tasks' tab"
+                    placeholder="Requires Refresh"
                     className={!autoTaskListId ? 'border-red-500 bg-red-50/50 dark:bg-red-950/20' : 'bg-muted'}
                 />
-                {!autoTaskListId && (
-                    <div className="text-xs text-red-500 font-medium">
-                        <p>Tasks cannot be created without a list ID.</p>
-                        <p className="mt-1">Action: Go to the <strong>"View & Bulk Delete"</strong> tab and click <strong>"Force Refresh"</strong> to pull the list ID from Zoho.</p>
-                    </div>
-                )}
             </div>
 
             <div className="grid gap-2">
@@ -765,20 +793,20 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
               />
             </div>
 
-            {/* 🚨 THE NEW TRACKING SWITCH 🚨 */}
-            <div className="grid gap-2">
-              <Label htmlFor="enableTracking" className="flex items-center space-x-1 whitespace-nowrap">
-                <Activity className="h-3 w-3 text-blue-500" />
-                <span>Enable Tracking</span>
-              </Label>
-              <div className="flex h-10 items-center">
-                  <Switch
-                      id="enableTracking"
-                      checked={enableTracking}
-                      onCheckedChange={(checked) => handleFormDataChange('enableTracking' as any, checked)}
-                      disabled={isProcessing}
-                  />
-              </div>
+            <div className="flex flex-col gap-3 justify-center pl-2">
+                <div className="flex items-center justify-between space-x-2">
+                    <Label htmlFor="enableTracking" className="flex items-center space-x-1 text-xs whitespace-nowrap cursor-pointer">
+                        <Activity className="h-3 w-3 text-blue-500" />
+                        <span>Track</span>
+                    </Label>
+                    <Switch
+                        id="enableTracking"
+                        checked={enableTracking}
+                        onCheckedChange={(checked) => handleFormDataChange('enableTracking' as any, checked)}
+                        disabled={isProcessing}
+                        className="scale-90"
+                    />
+                </div>
             </div>
 
           </div>
@@ -812,7 +840,7 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
                 
                 <div className="grid gap-2">
                     <div className="flex items-center justify-between">
-                        <Label htmlFor="primaryValues">Primary Field Values (one per line)</Label>
+                        <Label htmlFor="primaryValues">Smart Text Splitter (List)</Label>
                         <div className="flex items-center space-x-2">
                             <input
                                 type="file"
@@ -988,9 +1016,13 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
             </div>
           )}
 
-          <div className="mt-2 flex space-x-2">
+          <div className="mt-4 flex space-x-2">
             {!isProcessing && (
-              <Button onClick={handleStart} className="w-full" disabled={!selectedProfileName || projects.length === 0 || jobState.formData.primaryValues.trim().length === 0 || !autoTaskListId}>
+              <Button 
+                onClick={handleStart} 
+                className="w-full bg-green-600 hover:bg-green-700" 
+                disabled={!selectedProfileName || projects.length === 0 || jobState.formData.primaryValues.trim().length === 0 || !autoTaskListId}
+              >
                 <Play className="mr-2 h-4 w-4" /> Start Bulk Creation
               </Button>
             )}
@@ -1014,6 +1046,12 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
             )}
           </div>
         </div>
+
+        <ProjectsApplyAllModal 
+          isOpen={isApplyModalOpen} 
+          onClose={() => setIsApplyModalOpen(false)} 
+          onApply={handleApplyToAll} 
+        />
       </CardContent>
     </Card>
   );

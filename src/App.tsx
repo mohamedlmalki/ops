@@ -70,7 +70,6 @@ export interface Profile {
   bookings?: {
     workspaceId: string;
   };
-  // --- NEW: TELL TYPESCRIPT ABOUT OUR RADAR IMAP EMAILS ---
   imapSettings?: {
     email: string;
     password: string;
@@ -297,6 +296,9 @@ export interface ProjectsFormData {
   bulkDefaultData: { [key: string]: string }; 
   emails?: string;
   displayName?: string; 
+  stopAfterFailures?: number; // ✅ ADD THIS
+  enableTracking?: boolean;   // ✅ ADD THIS
+  appendAccountNumber?: boolean; // 🚨 ADDED THIS LINE
 }
 export interface ProjectsResult {
   projectName: string; 
@@ -458,8 +460,30 @@ const createInitialCreatorJobState = (): CreatorJobState => ({
     results: [], isProcessing: false, isPaused: false, isComplete: false, processingStartTime: null, processingTime: 0, totalToProcess: 0, countdown: 0, currentDelay: 1, filterText: '',
 });
 const createInitialProjectsJobState = (): ProjectsJobState => ({
-    formData: { taskName: '', primaryField: 'name', primaryValues: '', taskDescription: '', projectId: '', tasklistId: '', delay: 1, bulkDefaultData: {}, emails: '', },
-    results: [], isProcessing: false, isPaused: false, isComplete: false, processingStartTime: null, processingTime: 0, totalToProcess: 0, countdown: 0, currentDelay: 1, filterText: '',
+    formData: { 
+        taskName: '', 
+        primaryField: 'name', 
+        primaryValues: '', 
+        taskDescription: '', 
+        projectId: '', 
+        tasklistId: '', 
+        delay: 1, 
+        bulkDefaultData: {}, 
+        emails: '',
+        stopAfterFailures: 4, 
+        enableTracking: false,
+        appendAccountNumber: false 
+    },
+    results: [], 
+    isProcessing: false, 
+    isPaused: false, 
+    isComplete: false, 
+    processingStartTime: null, 
+    processingTime: 0, 
+    totalToProcess: 0, 
+    countdown: 0, 
+    currentDelay: 1, 
+    filterText: ''
 });
 const createInitialWebinarJobState = (): WebinarJobState => ({
     formData: { webinarId: '', webinar: null, emails: '', firstName: '', delay: 1, displayName: 'webinar_registrations', },
@@ -475,7 +499,7 @@ const createInitialBookingJobState = (): BookingJobState => ({
 });
 
 
-// 👁️ THE GOD MODE CACHE HOOK (WITH MEMORY SAVER)
+// 👁️ THE GOD MODE CACHE HOOK
 function usePersistentJobs<T>(storageKey: string, initialValue: T) {
     const [state, setState] = useState<T>(() => {
         try {
@@ -545,7 +569,6 @@ const MainApp = () => {
     
     const [isStartingAll, setIsStartingAll] = useState(false);
     
-    // 🛑 THE KILL SWITCH FOR START ALL LOOP
     const abortStartAllRef = useRef(false); 
 
     useJobTimer(jobs, setJobs, 'ticket');
@@ -560,15 +583,11 @@ const MainApp = () => {
     useJobTimer(fsmContactJobs, setFsmContactJobs, 'fsm-contact');
     useJobTimer(bookingJobs, setBookingJobs, 'bookings');
 
-    // 🚀 THE "BUCKET" REF FOR BATCHING SOCKET EVENTS
     const resultBuckets = useRef<any>({
         ticket: {}, invoice: {}, catalyst: {}, email: {}, qntrl: {}, people: {}, 
         creator: {}, projects: {}, webinar: {}, fsmContact: {}, bookings: {}
     });
 
-    // ==========================================
-    // 👁️ CLOUDFLARE REAL-TIME TRACKING POLLER
-    // ==========================================
     const lastNotifiedRef = useRef<Set<string>>(new Set());
 
     useEffect(() => {
@@ -610,9 +629,6 @@ const MainApp = () => {
         return () => clearInterval(interval);
     }, []);
 
-    // ==========================================
-    // 🚀 THE MAIN SOCKET & BATCHING ENGINE
-    // ==========================================
     useEffect(() => {
         const socket = io(SERVER_URL);
         socketRef.current = socket;
@@ -625,7 +641,6 @@ const MainApp = () => {
         const handleWakeUp = () => {
             if (document.visibilityState === 'visible') {
                 if (!socket.connected) {
-                    console.log("Tab woke up: Forcing Socket Reconnection...");
                     socket.connect();
                 }
                 socket.emit('requestActiveJobs');
@@ -667,23 +682,9 @@ const MainApp = () => {
             cleanupStuckJobs(bookingJobs, setBookingJobs, 'bookings');
         });
         
-        // 🚀 BUCKET FILLERS: These just quietly save data in the background
         socket.on('ticketResult', (result: any) => {
             if (!resultBuckets.current.ticket[result.profileName]) resultBuckets.current.ticket[result.profileName] = [];
             resultBuckets.current.ticket[result.profileName].push({ ...result, timestamp: new Date() });
-            
-            setJobs((prevJobs: any) => {
-                if (prevJobs[result.profileName] && prevJobs[result.profileName].formData) {
-                    return {
-                        ...prevJobs,
-                        [result.profileName]: {
-                            ...prevJobs[result.profileName],
-                            countdown: prevJobs[result.profileName].formData.delay || 0
-                        }
-                    };
-                }
-                return prevJobs;
-            });
         });
         socket.on('invoiceResult', (result: any) => {
             if (!resultBuckets.current.invoice[result.profileName]) resultBuckets.current.invoice[result.profileName] = [];
@@ -726,7 +727,6 @@ const MainApp = () => {
             resultBuckets.current.bookings[result.profileName].push({ ...result, timestamp: new Date() });
         });
 
-        // 🚀 THE BATCH PROCESSOR: Updates React only once per second!
         const flushInterval = setInterval(() => {
             const flushJobs = (bucketObj: any, setFunc: any, initialBuilder: any, reverseOrder = false) => {
                 let hasDataToFlush = false;
@@ -752,10 +752,21 @@ const MainApp = () => {
                                 const isLast = updatedResults.length >= totalTarget && totalTarget > 0;
                                 const defaultDelay = profileJob.formData?.delay || profileJob.formData?.bulkDelay || 1;
 
+                                let actualCountdown = defaultDelay;
+                                if (profileJob.processingStartTime && !isLast) {
+                                    const startTimeMs = new Date(profileJob.processingStartTime).getTime();
+                                    const nextTicketIndex = updatedResults.length;
+                                    const scheduledTimeMs = startTimeMs + (nextTicketIndex * defaultDelay * 1000);
+                                    const remainingMs = scheduledTimeMs - Date.now();
+                                    actualCountdown = Math.ceil(Math.max(0, remainingMs / 1000));
+                                } else if (isLast) {
+                                    actualCountdown = 0;
+                                }
+
                                 nextJobs[profile] = {
                                     ...profileJob,
                                     results: updatedResults,
-                                    countdown: isLast ? 0 : defaultDelay,
+                                    countdown: actualCountdown,
                                 };
                                 bucketObj[profile] = []; 
                             }
@@ -779,8 +790,6 @@ const MainApp = () => {
 
         }, 1000); 
 
-
-        // Standard immediate updates
         socket.on('ticketUpdate', (updateData) => {
           setJobs(prevJobs => {
             if (!prevJobs[updateData.profileName]) return prevJobs;
@@ -916,26 +925,34 @@ const MainApp = () => {
         }
     };
 
-    // ==========================================
-    // 🚀 MASTER CONTROL LOGIC (START / PAUSE / RESUME / END)
-    // ==========================================
-
+    // =================================================================
+    // 🚀 SMART START ALL BUTTON (WITH STRICT EMPTY TANK CHECKS)
+    // =================================================================
     const handleStartAll = async () => {
         if (!socketRef.current) return;
         setIsStartingAll(true);
-        abortStartAllRef.current = false; // Reset the kill switch
+        abortStartAllRef.current = false; 
         let startedCount = 0;
 
-        // Find profiles to start based on the Desk Ticket jobs
         const profilesToStart = Object.keys(jobs).filter(profileName => {
             const job = jobs[profileName];
             if (!job || job.isProcessing) return false;
+            
+            // 🚨 STRICT EMPTY TANK CHECKS
             const emailList = job.formData?.emails?.split('\n').map((e: string) => e.trim()).filter((e: string) => e !== '') || [];
-            return emailList.length > 0;
+            const hasEmails = emailList.length > 0;
+            const hasSubject = job.formData?.subject?.trim().length > 0;
+            const hasDescription = job.formData?.description?.trim().length > 0;
+
+            // Only allow starting if ALL required fields are filled
+            return hasEmails && hasSubject && hasDescription;
         });
 
         if (profilesToStart.length === 0) {
-            toast({ title: "Nothing to start", description: "No idle accounts with valid emails found." });
+            toast({ 
+                title: "Nothing to start", 
+                description: "No idle accounts found. Make sure Accounts have Emails, a Subject, AND a Description!" 
+            });
             setIsStartingAll(false);
             return;
         }
@@ -943,7 +960,6 @@ const MainApp = () => {
         toast({ title: "Starting Fleet...", description: `Initializing ${profilesToStart.length} accounts one by one.` });
 
         for (const pName of profilesToStart) {
-            // CHECK THE KILL SWITCH! If End All was clicked, stop starting new ones!
             if (abortStartAllRef.current) {
                 toast({ title: "Start Aborted", description: "Stopped initializing the rest of the fleet." });
                 break;
@@ -975,7 +991,6 @@ const MainApp = () => {
             });
             startedCount++;
             
-            // Wait 1.5 seconds before starting the next one
             await new Promise(resolve => setTimeout(resolve, 1500)); 
         }
 
@@ -987,7 +1002,7 @@ const MainApp = () => {
 
     const handlePauseAll = () => {
         if (!socketRef.current) return;
-        abortStartAllRef.current = true; // Engage Kill Switch
+        abortStartAllRef.current = true; 
         Object.keys(jobs).forEach(profileName => {
             const job = jobs[profileName];
             if (job.isProcessing && !job.isPaused) {
@@ -1014,7 +1029,7 @@ const MainApp = () => {
         if (!socketRef.current) return;
         if (!window.confirm("Are you sure you want to completely end ALL active jobs?")) return;
         
-        abortStartAllRef.current = true; // Engage Kill Switch to stop the Start All loop instantly!
+        abortStartAllRef.current = true; 
         
         Object.keys(jobs).forEach(profileName => {
             const job = jobs[profileName];
@@ -1056,7 +1071,6 @@ const MainApp = () => {
             
             <ProfileModal isOpen={isProfileModalOpen} onClose={() => setIsProfileModalOpen(false)} onSave={handleSaveProfile} profile={editingProfile} socket={socketRef.current} />
 
-            {/* 🚀 GLOBAL CONTROL PANEL */}
             <div className="fixed bottom-6 left-1/2 -translate-x-1/2 flex gap-3 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md p-3 rounded-full shadow-2xl border border-slate-200 dark:border-slate-800 z-[9999] transition-all">
                 <button 
                     onClick={handleStartAll} 

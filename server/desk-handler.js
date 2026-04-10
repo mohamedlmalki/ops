@@ -17,7 +17,6 @@ const getRealDeskProfile = (profiles, profileName) => {
         || profiles.find(p => p.profileName === profileName);
 };
 
-// 🧠 ULTRA-SIMPLE SCANNER: Logs Removed for Clean CMD!
 async function injectSmartTracking(description, email, selectedProfileName, deskConfig, ticketId, enableTracking) {
     if (!enableTracking) return description;
 
@@ -130,6 +129,14 @@ const handleSendTestTicket = async (socket, data) => {
 
 const handleStartBulkCreate = async (socket, data) => {
     const { emails, subject, description, delay, selectedProfileName, sendDirectReply, verifyEmail, stopAfterFailures = 0, displayName, enableTracking } = data;
+    
+    // ==========================================
+    // 🚨 MASSIVE DEBUG LOGS - BULK START
+    // ==========================================
+    console.log(`\n🟢 =================================================`);
+    console.log(`🟢 [NEW BULK JOB RECEIVED FROM FRONTEND]`);
+    console.log(`🟢 RAW DELAY RECEIVED: "${delay}" (Type: ${typeof delay})`);
+    
     const profiles = readProfiles();
     const activeProfile = getRealDeskProfile(profiles, selectedProfileName);
     const jobId = createJobId(socket.id, selectedProfileName, 'ticket');
@@ -146,15 +153,28 @@ const handleStartBulkCreate = async (socket, data) => {
         const myAccountQueue = new Queue(queueName, { connection });
         await myAccountQueue.drain(true).catch(() => {});
 
+        // EXACT MATH: Convert seconds to milliseconds
         const delayMs = Number(delay) * 1000 || 0;
-        const jobs = emails.filter(e => e.trim()).map((email, index) => ({
-            name: 'createTicket',
-            data: { email, subject, description, selectedProfileName, sendDirectReply, verifyEmail, displayName, enableTracking, deskConfig, activeProfile, jobId, delay },
-            opts: { delay: index * delayMs } 
-        }));
+        const staggerInterval = delayMs;
+
+        console.log(`🟢 STAGGER INTERVAL SET TO: ${staggerInterval}ms per ticket`);
+        console.log(`🟢 -------------------------------------------------`);
+
+        const jobs = emails.filter(e => e.trim()).map((email, index) => {
+            const scheduledDelay = index * staggerInterval;
+            
+            // PRINTING THE SCHEDULE FOR EVERY SINGLE TICKET
+            console.log(`   🎫 Ticket ${index + 1} (${email}) scheduled for: +${scheduledDelay}ms`);
+            
+            return {
+                name: 'createTicket',
+                data: { email, subject, description, selectedProfileName, sendDirectReply, verifyEmail, displayName, enableTracking, deskConfig, activeProfile, jobId, delay },
+                opts: { delay: scheduledDelay } 
+            };
+        });
 
         await myAccountQueue.addBulk(jobs);
-        console.log(`[QUEUE] 📦 Dropped ${jobs.length} staggered tickets onto ${queueName}'s desk!`);
+        console.log(`🟢 =================================================\n`);
 
     } catch (error) {
         socket.emit('bulkError', { message: error.message || 'Error', profileName: selectedProfileName, jobType: 'ticket' });
@@ -164,6 +184,12 @@ const handleStartBulkCreate = async (socket, data) => {
 const processSingleTicketJob = async (jobData) => {
     const { email, subject, description, selectedProfileName, sendDirectReply, verifyEmail, displayName, enableTracking, deskConfig, activeProfile, jobId } = jobData;
     
+    // ==========================================
+    // 🚨 DEBUG LOGS - TICKET PROCESSING TIMER
+    // ==========================================
+    const startTime = Date.now();
+    console.log(`\n⚙️ [WORKER START] Grabbing ticket for: ${email} at ${new Date(startTime).toISOString()}`);
+
     try {
         const finalDescription = await injectSmartTracking(description, email, selectedProfileName, deskConfig, 'Bulk', enableTracking);
         const ticketData = { subject, description: finalDescription, departmentId: deskConfig.defaultDepartmentId, contact: { email }, channel: 'Email', resolution: displayName };
@@ -193,9 +219,19 @@ const processSingleTicketJob = async (jobData) => {
             successMessage += ` | ${verifyResult.details}`;
         }
 
+        const endTime = Date.now();
+        const duration = endTime - startTime;
+        // 🛑 ADDED THE EXACT FINISH TIMESTAMP HERE
+        console.log(`✅ [WORKER DONE] Ticket ${newTicket.ticketNumber} finished at ${new Date(endTime).toISOString()}. Zoho API took exactly: ${duration}ms.`);
+
         return { email, success: true, ticketNumber: newTicket.ticketNumber, details: successMessage, fullResponse: fullResponseData, profileName: selectedProfileName };
 
     } catch (error) {
+        const endTime = Date.now();
+        const duration = endTime - startTime;
+        // 🛑 ADDED THE EXACT FINISH TIMESTAMP HERE FOR ERRORS TOO
+        console.log(`❌ [WORKER ERROR] Ticket failed at ${new Date(endTime).toISOString()}. Zoho API took exactly: ${duration}ms.`);
+
         const { message, fullResponse } = parseError(error);
         throw new Error(JSON.stringify({ email, success: false, error: message, fullResponse, profileName: selectedProfileName }));
     }
