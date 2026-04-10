@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch'; 
 import { ProjectsJobState, ZohoProject, ProjectsFormData, ProjectsJobs } from './ProjectsDataTypes';
+import { Profile } from '@/App'; 
 import { Loader2, Play, Pause, Square, ListFilterIcon, ImagePlus, Eye, Save, Upload, List, CheckCircle2, XCircle, Hash, AlertTriangle, Plus, RefreshCw, Trash2, Activity, CopyCheck } from 'lucide-react';
 import { Socket } from 'socket.io-client';
 import {
@@ -199,12 +200,14 @@ interface TaskBulkFormProps {
   socket: Socket | null;
   jobState: ProjectsJobState;
   setJobs: React.Dispatch<React.SetStateAction<ProjectsJobs>>;
+  createInitialJobState: () => ProjectsJobState; 
   autoTaskListId: string | null;
   selectedProjectId: string | null;
   currentProjectName: string;
   setCurrentProjectName: React.Dispatch<React.SetStateAction<string>>;
   isUpdatingName: boolean;
-  handleUpdateProjectName: () => void;
+  handleUpdateProjectName: (finalName: string) => void; 
+  profiles: Profile[]; 
 }
 
 export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({ 
@@ -214,12 +217,14 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
     socket, 
     jobState, 
     setJobs, 
+    createInitialJobState,
     autoTaskListId,
     selectedProjectId,
     currentProjectName,
     setCurrentProjectName,
     isUpdatingName,
-    handleUpdateProjectName
+    handleUpdateProjectName,
+    profiles
 }) => {
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -233,6 +238,7 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
   const [isLoadingLayout, setIsLoadingLayout] = useState(false);
   
   const [isApplyModalOpen, setIsApplyModalOpen] = useState(false);
+  const [isApplyingAll, setIsApplyingAll] = useState(false); 
 
   const stopAfterFailures = (jobState.formData as any).stopAfterFailures || 4;
   const enableTracking = (jobState.formData as any).enableTracking || false; 
@@ -372,6 +378,61 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
     }
   }, [allFields, jobState.formData.primaryField, handleFormDataChange]); 
 
+  const generatePayloadBulkData = useCallback(() => {
+      let finalBulkData = { ...jobState.formData.bulkDefaultData };
+      const smartText = jobState.formData.smartSplitterText || '';
+      const accountIndex = profiles.findIndex(p => p.profileName === selectedProfileName) + 1;
+      const multilineFields = allFields.filter(f => f.column_type === 'multiline');
+
+      if (smartText.trim() !== '') {
+          if (multilineFields.length > 0) {
+              const maxCharsPerField = 800;
+              let remainingText = smartText;
+              
+              for (const field of multilineFields) {
+                  if (remainingText.length === 0) break;
+                  
+                  let cutIndex = remainingText.length;
+                  if (remainingText.length > maxCharsPerField) {
+                      cutIndex = remainingText.lastIndexOf('\n', maxCharsPerField);
+                      if (cutIndex === -1 || cutIndex < maxCharsPerField * 0.5) {
+                          cutIndex = remainingText.lastIndexOf(' ', maxCharsPerField);
+                      }
+                      if (cutIndex === -1 || cutIndex < maxCharsPerField * 0.5) {
+                          cutIndex = maxCharsPerField;
+                      }
+                  }
+                  
+                  let chunk = remainingText.substring(0, cutIndex).trim();
+
+                  if (appendAccountNumber && selectedProfileName) {
+                      const prefix = `${selectedProfileName}<br><br>`;
+                      if (!chunk.startsWith(prefix)) {
+                          chunk = `${prefix}${chunk}<br><br><br>account number ${accountIndex}`;
+                      }
+                  }
+
+                  finalBulkData[field.column_name] = chunk;
+                  remainingText = remainingText.substring(cutIndex).trim();
+              }
+          }
+      } else {
+          if (appendAccountNumber && selectedProfileName) {
+              multilineFields.forEach(field => {
+                  const key = field.column_name;
+                  if (finalBulkData[key] && typeof finalBulkData[key] === 'string') {
+                      const prefix = `${selectedProfileName}<br><br>`;
+                      if (!finalBulkData[key].startsWith(prefix)) {
+                          finalBulkData[key] = `${prefix}${finalBulkData[key]}<br><br><br>account number ${accountIndex}`;
+                      }
+                  }
+              });
+          }
+      }
+      
+      return finalBulkData;
+  }, [jobState.formData, allFields, appendAccountNumber, profiles, selectedProfileName]);
+
   useEffect(() => {
       if (!socket || !selectedProfileName) return;
       
@@ -388,7 +449,20 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
                   return;
               }
 
-              const formDataToResume = {
+              const payloadBulkData = generatePayloadBulkData();
+
+              const payloadFormData = {
+                  ...jobState.formData,
+                  primaryValues: remainingTasks.join('\n'), 
+                  tasklistId: autoTaskListId,
+                  displayName: currentProjectName,
+                  stopAfterFailures: stopAfterFailures,
+                  enableTracking: enableTracking,
+                  appendAccountNumber: appendAccountNumber,
+                  bulkDefaultData: payloadBulkData 
+              };
+
+              const stateFormData = {
                   ...jobState.formData,
                   primaryValues: remainingTasks.join('\n'), 
                   tasklistId: autoTaskListId,
@@ -400,13 +474,19 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
 
               setJobs((prev: any) => ({
                   ...prev,
-                  [selectedProfileName]: { ...prev[selectedProfileName], isPaused: false, isProcessing: true, isComplete: false },
+                  [selectedProfileName]: { 
+                      ...prev[selectedProfileName], 
+                      formData: stateFormData, 
+                      isPaused: false, 
+                      isProcessing: true, 
+                      isComplete: false 
+                  },
               }));
 
               socket.emit('startBulkCreateTasks', {
                   selectedProfileName,
                   activeProfile: { projects: { portalId: projects.find(p => p.id === jobState.formData.projectId)?.portal_id } }, 
-                  formData: formDataToResume 
+                  formData: payloadFormData 
               });
 
               toast({ title: 'Session Recovered', description: `Resuming from task ${processedCount + 1}...` });
@@ -415,27 +495,50 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
       
       socket.on('requestJobRecovery', onRecovery);
       return () => { socket.off('requestJobRecovery', onRecovery); };
-  }, [socket, selectedProfileName, jobState.formData, results.length, autoTaskListId, stopAfterFailures, enableTracking, appendAccountNumber, projects, currentProjectName]);
+  }, [socket, selectedProfileName, jobState.formData, results.length, autoTaskListId, stopAfterFailures, enableTracking, appendAccountNumber, projects, currentProjectName, generatePayloadBulkData]);
 
-  const handleApplyToAll = (updates: any) => {
+  // 🚨 MASSIVE LOGS ADDED TO DEBUG "APPLY ALL"
+  const handleApplyToAll = async (updates: any) => {
+    console.log(`\n🟢 ========================================`);
+    console.log(`🟢 [APPLY ALL] STARTING`);
+    console.log(`🟢 Updates Received from Popup:`, updates);
+    setIsApplyingAll(true);
+
     if (updates.displayName !== undefined) {
         setCurrentProjectName(updates.displayName);
-        handleFormDataChange('displayName', updates.displayName);
+        handleFormDataChange('displayName', updates.displayName); // Forces current active view to update
     }
+
+    await new Promise(resolve => setTimeout(resolve, 800));
 
     setJobs((prev: any) => {
       const next = { ...prev };
-      Object.keys(next).forEach(profileName => {
-        if (profileName !== selectedProfileName) {
-            next[profileName] = {
-            ...next[profileName],
-            formData: { ...next[profileName].formData, ...updates }
-            };
-        }
+      console.log(`🟢 Iterating over ${profiles.length} profiles to apply data...`);
+      
+      profiles.forEach(profile => {
+        const pName = profile.profileName;
+        
+        // Safety check: Does this profile exist in the main UI state?
+        const existingJob = next[pName] || createInitialJobState();
+
+        next[pName] = {
+          ...existingJob,
+          formData: { 
+            ...existingJob.formData, 
+            ...updates 
+          }
+        };
+        console.log(`   ✅ Applied to: ${pName}`);
       });
+
+      console.log(`🟢 [APPLY ALL] FINISHED. Final System State:`, next);
+      console.log(`🟢 ========================================\n`);
       return next;
     });
-    toast({ title: "Settings Applied Successfully!" });
+
+    setIsApplyingAll(false);
+    setIsApplyModalOpen(false); 
+    toast({ title: "Settings Applied to All Accounts!" });
   };
 
   const handleStart = () => {
@@ -450,7 +553,6 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
     }
 
     if (!autoTaskListId) {
-        console.log("❌ Missing autoTaskListId for Bulk Task Creation. The app cannot proceed without a valid Tasklist ID.");
         return toast({
             title: 'Missing Tasklist ID',
             description: 'Could not find an active tasklist for this project. Please go to the "View Tasks" tab and click "Force Refresh" so the app can fetch a valid Tasklist ID from Zoho.',
@@ -473,20 +575,32 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
         return toast({ title: 'Connection Error', description: 'Socket not connected.', variant: 'destructive' });
     }
 
-    const formData: ProjectsFormData = {
+    const payloadBulkData = generatePayloadBulkData();
+
+    const payloadFormData: ProjectsFormData = {
       ...jobState.formData, 
       tasklistId: autoTaskListId, 
       displayName: currentProjectName, 
       stopAfterFailures: stopAfterFailures,
       enableTracking: enableTracking,
-      appendAccountNumber: appendAccountNumber 
+      appendAccountNumber: appendAccountNumber,
+      bulkDefaultData: payloadBulkData 
+    };
+
+    const stateFormData: ProjectsFormData = {
+        ...jobState.formData, 
+        tasklistId: autoTaskListId, 
+        displayName: currentProjectName, 
+        stopAfterFailures: stopAfterFailures,
+        enableTracking: enableTracking,
+        appendAccountNumber: appendAccountNumber
     };
 
     setJobs((prevJobs: any) => ({
       ...prevJobs,
       [selectedProfileName]: {
         ...jobState,
-        formData, 
+        formData: stateFormData, 
         totalToProcess: tasksToProcess.length,
         isProcessing: true,
         isPaused: false,
@@ -501,7 +615,7 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
     socket.emit('startBulkCreateTasks', {
         selectedProfileName,
         activeProfile: { projects: { portalId: projects.find(p => p.id === projectId)?.portal_id } }, 
-        formData: formData 
+        formData: payloadFormData 
     });
     
     toast({ title: 'Bulk Task Job Started', description: `${tasksToProcess.length} tasks queued.` });
@@ -566,6 +680,10 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
   const successCount = results.filter(r => r.success).length;
   const errorCount = results.filter(r => !r.success).length;
   const remainingCount = Math.max(0, (jobState.totalToProcess || primaryValuesCount) - results.length);
+
+  const displayedProjectName = jobState.formData.displayName !== undefined && jobState.formData.displayName !== '' 
+      ? jobState.formData.displayName 
+      : currentProjectName;
 
   return (
     <Card>
@@ -708,18 +826,22 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
                 <div className="flex space-x-2">
                     <Input
                         id="projectName"
-                        value={currentProjectName}
-                        onChange={(e) => setCurrentProjectName(e.target.value)}
+                        value={displayedProjectName}
+                        onChange={(e) => {
+                            setCurrentProjectName(e.target.value);
+                            handleFormDataChange('displayName', e.target.value);
+                        }}
                         placeholder={"Select a project"}
-                        disabled={isUpdatingName} 
                     />
                     <Button
                         variant="default"
                         size="icon"
-                        onClick={(e) => { e.preventDefault(); handleUpdateProjectName(); }}
-                        disabled={isUpdatingName}
+                        onClick={(e) => { 
+                            e.preventDefault(); 
+                            handleUpdateProjectName(displayedProjectName); 
+                        }}
                     >
-                        {isUpdatingName ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                        <Save className="h-4 w-4" />
                     </Button>
                 </div>
             </div>
@@ -840,7 +962,7 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
                 
                 <div className="grid gap-2">
                     <div className="flex items-center justify-between">
-                        <Label htmlFor="primaryValues">Smart Text Splitter (List)</Label>
+                        <Label htmlFor="primaryValues">Primary Field Values (Task Names - one per line)</Label>
                         <div className="flex items-center space-x-2">
                             <input
                                 type="file"
@@ -867,7 +989,7 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
                     </div>
                     <Textarea
                     id="primaryValues"
-                    placeholder="Paste your list here, e.g., a list of emails or task names."
+                    placeholder="Paste your list here, e.g., a list of task names."
                     rows={8}
                     value={jobState.formData.primaryValues} 
                     onChange={(e) => handleFormDataChange('primaryValues', e.target.value)} 
@@ -877,6 +999,11 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
                     {!isLoadingLayout && allFields.length > 0 && (
                         <div className="mt-4">
                             <SmartTextSplitter
+                                value={jobState.formData.smartSplitterText || ''}
+                                onChange={(val) => handleFormDataChange('smartSplitterText', val)}
+                                appendAccountNumber={appendAccountNumber} 
+                                accountName={selectedProfileName}         
+                                accountIndex={profiles.findIndex(p => p.profileName === selectedProfileName) + 1} 
                                 fields={allFields
                                     .filter(f => visibleFields[f.column_name] && f.column_name !== jobState.formData.primaryField)
                                     .map(f => ({
@@ -885,8 +1012,21 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
                                         data_type: f.column_type
                                     }))}
                                 onSplitValues={(newValues) => {
-                                    Object.entries(newValues).forEach(([fieldApiName, chunkText]) => {
-                                        handleDynamicFieldChange(fieldApiName, chunkText);
+                                    setJobs((prev: any) => {
+                                        const prevJobState = prev[selectedProfileName!] || jobState;
+                                        return {
+                                            ...prev,
+                                            [selectedProfileName!]: {
+                                                ...prevJobState,
+                                                formData: {
+                                                    ...prevJobState.formData,
+                                                    bulkDefaultData: {
+                                                        ...prevJobState.formData.bulkDefaultData,
+                                                        ...newValues
+                                                    }
+                                                }
+                                            }
+                                        };
                                     });
                                 }}
                             />
@@ -1050,7 +1190,8 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
         <ProjectsApplyAllModal 
           isOpen={isApplyModalOpen} 
           onClose={() => setIsApplyModalOpen(false)} 
-          onApply={handleApplyToAll} 
+          onApply={handleApplyToAll}
+          isApplying={isApplyingAll}
         />
       </CardContent>
     </Card>

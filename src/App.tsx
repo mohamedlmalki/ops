@@ -1,5 +1,4 @@
 // --- FILE: src/App.tsx ---
-
 import React, { useState, useEffect, useRef } from 'react';
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
@@ -296,9 +295,10 @@ export interface ProjectsFormData {
   bulkDefaultData: { [key: string]: string }; 
   emails?: string;
   displayName?: string; 
-  stopAfterFailures?: number; // ✅ ADD THIS
-  enableTracking?: boolean;   // ✅ ADD THIS
-  appendAccountNumber?: boolean; // 🚨 ADDED THIS LINE
+  stopAfterFailures?: number; 
+  enableTracking?: boolean;
+  appendAccountNumber?: boolean;
+  smartSplitterText?: string;
 }
 export interface ProjectsResult {
   projectName: string; 
@@ -469,10 +469,11 @@ const createInitialProjectsJobState = (): ProjectsJobState => ({
         tasklistId: '', 
         delay: 1, 
         bulkDefaultData: {}, 
-        emails: '',
+        emails: '', 
         stopAfterFailures: 4, 
-        enableTracking: false,
-        appendAccountNumber: false 
+        enableTracking: false, 
+        appendAccountNumber: false, 
+        smartSplitterText: '' 
     },
     results: [], 
     isProcessing: false, 
@@ -925,9 +926,6 @@ const MainApp = () => {
         }
     };
 
-    // =================================================================
-    // 🚀 SMART START ALL BUTTON (WITH STRICT EMPTY TANK CHECKS)
-    // =================================================================
     const handleStartAll = async () => {
         if (!socketRef.current) return;
         setIsStartingAll(true);
@@ -938,13 +936,11 @@ const MainApp = () => {
             const job = jobs[profileName];
             if (!job || job.isProcessing) return false;
             
-            // 🚨 STRICT EMPTY TANK CHECKS
             const emailList = job.formData?.emails?.split('\n').map((e: string) => e.trim()).filter((e: string) => e !== '') || [];
             const hasEmails = emailList.length > 0;
             const hasSubject = job.formData?.subject?.trim().length > 0;
             const hasDescription = job.formData?.description?.trim().length > 0;
 
-            // Only allow starting if ALL required fields are filled
             return hasEmails && hasSubject && hasDescription;
         });
 

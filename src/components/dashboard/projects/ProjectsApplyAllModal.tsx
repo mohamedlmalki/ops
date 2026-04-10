@@ -1,23 +1,25 @@
 // --- FILE: src/components/dashboard/projects/ProjectsApplyAllModal.tsx ---
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
-import { CopyCheck, Clock, AlertTriangle, Activity, ListChecks, Edit, Hash } from 'lucide-react';
+import { CopyCheck, Clock, AlertTriangle, Activity, ListChecks, Edit, SplitSquareHorizontal, Loader2 } from 'lucide-react';
 import { Separator } from '@/components/ui/separator';
 
 interface ProjectsApplyAllModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onApply: (data: any) => void;
+  onApply: (data: any) => Promise<void> | void;
+  isApplying: boolean; 
 }
 
-export const ProjectsApplyAllModal: React.FC<ProjectsApplyAllModalProps> = ({ isOpen, onClose, onApply }) => {
+export const ProjectsApplyAllModal: React.FC<ProjectsApplyAllModalProps> = ({ isOpen, onClose, onApply, isApplying }) => {
   const [formData, setFormData] = useState({
     primaryValues: '', 
+    smartSplitterText: '', 
     delay: '',
     stopAfterFailures: '',
     displayName: '', 
@@ -25,11 +27,26 @@ export const ProjectsApplyAllModal: React.FC<ProjectsApplyAllModalProps> = ({ is
     appendAccountNumber: false,
   });
 
-  const handleApply = () => {
+  useEffect(() => {
+    if (isOpen) {
+      setFormData({
+        primaryValues: '', 
+        smartSplitterText: '', 
+        delay: '',
+        stopAfterFailures: '',
+        displayName: '', 
+        enableTracking: false,
+        appendAccountNumber: false,
+      });
+    }
+  }, [isOpen]);
+
+  const handleApply = async () => {
     const updates: any = {};
     
-    // Maps exactly to the Smart Text Splitter in the main form
     if (formData.primaryValues.trim()) updates.primaryValues = formData.primaryValues;
+    if (formData.smartSplitterText.trim()) updates.smartSplitterText = formData.smartSplitterText;
+    
     if (formData.delay !== '') updates.delay = Number(formData.delay);
     if (formData.stopAfterFailures !== '') updates.stopAfterFailures = Number(formData.stopAfterFailures);
     if (formData.displayName.trim()) updates.displayName = formData.displayName;
@@ -37,42 +54,78 @@ export const ProjectsApplyAllModal: React.FC<ProjectsApplyAllModalProps> = ({ is
     updates.enableTracking = formData.enableTracking;
     updates.appendAccountNumber = formData.appendAccountNumber;
 
-    onApply(updates);
-    onClose();
+    // 🚨 LOGGING EXACTLY WHAT IS LEAVING THE POPUP
+    console.log(`\n🟢 [POPUP] Clicking Apply... Sending these updates:`, updates);
+
+    await onApply(updates);
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-3xl bg-card border-border shadow-large max-h-[90vh] overflow-y-auto">
+    <Dialog open={isOpen} onOpenChange={(open) => !isApplying && !open && onClose()}>
+      <DialogContent className="max-w-4xl bg-card border-border shadow-large max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center space-x-2 text-xl">
             <CopyCheck className="h-5 w-5 text-primary" />
-            <span>Apply Projects Settings to All</span>
+            <span>Apply Projects Settings to All Accounts</span>
           </DialogTitle>
           <DialogDescription>
-            Generic fields left blank will keep their existing data. Checkboxes will instantly overwrite existing settings on all accounts. Project IDs and Tasklists are <strong>never</strong> overwritten.
+            Leave boxes empty if you want to keep the existing data on other accounts. Checkboxes will be forcefully applied everywhere.
           </DialogDescription>
         </DialogHeader>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 py-4">
           
-          <div className="space-y-4">
+          <div className="space-y-6">
             <div className="space-y-2">
-              <Label className="flex items-center space-x-2">
+              <Label className="flex items-center space-x-2 text-indigo-700 dark:text-indigo-300 font-bold">
                 <ListChecks className="h-4 w-4" />
-                <span>Smart Text Splitter (List)</span>
+                <span>Primary Field Values (Task Names)</span>
               </Label>
               <Textarea 
                 value={formData.primaryValues} 
                 onChange={(e) => setFormData({...formData, primaryValues: e.target.value})}
-                placeholder="Task Name 1&#10;Task Name 2&#10;(Leave blank to keep existing)"
-                className="min-h-[160px] font-mono text-sm bg-muted/30 border-border focus:bg-card"
+                placeholder="Task Name 1&#10;Task Name 2"
+                className="min-h-[120px] font-mono text-sm bg-muted/30"
+                disabled={isApplying}
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label className="flex items-center space-x-2 text-purple-700 dark:text-purple-300 font-bold">
+                <SplitSquareHorizontal className="h-4 w-4" />
+                <span>Smart Text Splitter (Large Body Text)</span>
+              </Label>
+              <Textarea 
+                value={formData.smartSplitterText} 
+                onChange={(e) => setFormData({...formData, smartSplitterText: e.target.value})}
+                placeholder="Paste the large text here that you want split across custom fields..."
+                className="min-h-[120px] font-mono text-sm bg-muted/30"
+                disabled={isApplying}
+              />
+            </div>
+          </div>
+
+          <div className="space-y-6">
+            <div className="space-y-2">
+              <Label className="flex items-center space-x-2 font-bold">
+                <Edit className="h-4 w-4" />
+                <span>Active Project Name</span>
+              </Label>
+              <Input 
+                value={formData.displayName} 
+                onChange={(e) => setFormData({...formData, displayName: e.target.value})}
+                placeholder="Type here to override project name..."
+                className="bg-muted/30"
+                disabled={isApplying}
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Acts like 'Sender Name'. You still need to click the Save icon on the dashboard to push this to Zoho.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4 pt-2">
               <div className="space-y-2">
-                <Label className="flex items-center space-x-2">
+                <Label className="flex items-center space-x-2 font-bold">
                   <Clock className="h-4 w-4" />
                   <span>Delay (Sec)</span>
                 </Label>
@@ -80,12 +133,13 @@ export const ProjectsApplyAllModal: React.FC<ProjectsApplyAllModalProps> = ({ is
                   type="number"
                   value={formData.delay} 
                   onChange={(e) => setFormData({...formData, delay: e.target.value})}
-                  placeholder="Keep..."
-                  className="bg-muted/30 border-border focus:bg-card"
+                  placeholder="e.g. 5"
+                  className="bg-muted/30"
+                  disabled={isApplying}
                 />
               </div>
               <div className="space-y-2">
-                <Label className="flex items-center space-x-2">
+                <Label className="flex items-center space-x-2 font-bold">
                   <AlertTriangle className="h-4 w-4 text-amber-500" />
                   <span>Auto-Pause</span>
                 </Label>
@@ -94,32 +148,17 @@ export const ProjectsApplyAllModal: React.FC<ProjectsApplyAllModalProps> = ({ is
                   min="0"
                   value={formData.stopAfterFailures} 
                   onChange={(e) => setFormData({...formData, stopAfterFailures: e.target.value})}
-                  placeholder="Keep..."
-                  className="bg-muted/30 border-border focus:bg-card"
+                  placeholder="e.g. 4"
+                  className="bg-muted/30"
+                  disabled={isApplying}
                 />
               </div>
             </div>
-          </div>
 
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label className="flex items-center space-x-2">
-                <Edit className="h-4 w-4" />
-                <span>Active Project Name</span>
-              </Label>
-              <Input 
-                value={formData.displayName} 
-                onChange={(e) => setFormData({...formData, displayName: e.target.value})}
-                placeholder="Leave blank to keep existing..."
-                className="bg-muted/30 border-border focus:bg-card"
-              />
-              <p className="text-xs text-muted-foreground mt-1">Updates the active project name field across profiles.</p>
-            </div>
-
-            <div className="space-y-2 pt-2">
-              <Label className="flex items-center space-x-2">
+            <div className="space-y-2 pt-4">
+              <Label className="flex items-center space-x-2 font-bold">
                 <Activity className="h-4 w-4" />
-                <span>Optional Actions</span>
+                <span>Optional Actions (Forces True/False)</span>
               </Label>
               <div className="space-y-4 rounded-lg bg-muted/30 p-4 border border-border">
                 
@@ -128,12 +167,13 @@ export const ProjectsApplyAllModal: React.FC<ProjectsApplyAllModalProps> = ({ is
                     id="projects-apply-append-number" 
                     checked={formData.appendAccountNumber} 
                     onCheckedChange={(val) => setFormData({...formData, appendAccountNumber: !!val})} 
+                    disabled={isApplying}
                   />
                   <div className="grid gap-1.5 leading-none">
                     <Label htmlFor="projects-apply-append-number" className="font-medium hover:cursor-pointer flex items-center">
-                      Append Account Number
+                      Append Account Info to Fields
                     </Label>
-                    <p className="text-xs text-muted-foreground">Adds 1, 2, 3... sequentially to the tasks.</p>
+                    <p className="text-xs text-muted-foreground">Injects Account Name at the top and Account Number at the bottom of all split fields.</p>
                   </div>
                 </div>
 
@@ -144,10 +184,11 @@ export const ProjectsApplyAllModal: React.FC<ProjectsApplyAllModalProps> = ({ is
                     id="projects-apply-tracking" 
                     checked={formData.enableTracking} 
                     onCheckedChange={(val) => setFormData({...formData, enableTracking: !!val})} 
+                    disabled={isApplying}
                   />
                   <div className="grid gap-1.5 leading-none">
                     <Label htmlFor="projects-apply-tracking" className="font-medium hover:cursor-pointer text-blue-500">Enable Cloudflare Tracking</Label>
-                    <p className="text-xs text-muted-foreground">Appends invisible tracking to tasks across all accounts.</p>
+                    <p className="text-xs text-muted-foreground">Appends the invisible 1x1 tracking pixel to tasks.</p>
                   </div>
                 </div>
 
@@ -157,9 +198,10 @@ export const ProjectsApplyAllModal: React.FC<ProjectsApplyAllModalProps> = ({ is
         </div>
 
         <DialogFooter className="pt-4 border-t border-border">
-          <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button onClick={handleApply} className="bg-purple-600 hover:bg-purple-700 text-white font-bold">
-            <CopyCheck className="h-4 w-4 mr-2" /> Apply to All Accounts
+          <Button variant="outline" onClick={onClose} disabled={isApplying}>Cancel</Button>
+          <Button onClick={handleApply} disabled={isApplying} className="bg-purple-600 hover:bg-purple-700 text-white font-bold">
+            {isApplying ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <CopyCheck className="h-4 w-4 mr-2" />}
+            {isApplying ? 'Applying...' : 'Apply to All Accounts'}
           </Button>
         </DialogFooter>
       </DialogContent>

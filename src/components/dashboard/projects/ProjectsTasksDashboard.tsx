@@ -146,13 +146,13 @@ export const ProjectsTasksDashboard: React.FC<ProjectsTasksDashboardProps> = ({
 
   useEffect(() => { handleFetchProjects(); }, [handleFetchProjects]);
 
-  const handleUpdateProjectName = useCallback(() => {
-      if (!socket || !activeProfileName || !selectedProfile || !selectedProjectId || !currentProjectName) return;
+  const handleUpdateProjectName = useCallback((newName: string) => {
+      if (!socket || !activeProfileName || !selectedProfile || !selectedProjectId || !newName) return;
       setIsUpdatingName(true);
       socket.emit('updateProjectDetails', { 
-          selectedProfileName: activeProfileName, portalId: selectedProfile.projects?.portalId, projectId: selectedProjectId, payload: { name: currentProjectName }
+          selectedProfileName: activeProfileName, portalId: selectedProfile.projects?.portalId, projectId: selectedProjectId, payload: { name: newName }
       }); 
-  }, [socket, activeProfileName, selectedProfile, selectedProjectId, currentProjectName]); 
+  }, [socket, activeProfileName, selectedProfile, selectedProjectId]); 
 
   const fetchTasks = useCallback(() => {
       if (socket && activeProfileName && selectedProjectId && selectedProfile) {
@@ -378,9 +378,19 @@ export const ProjectsTasksDashboard: React.FC<ProjectsTasksDashboardProps> = ({
                         <div className="space-y-6">
                             
                             <TaskBulkForm
-                                selectedProfileName={activeProfileName} projects={projects} socket={socket} jobState={jobState} setJobs={setJobs}
-                                createInitialJobState={createInitialJobState} autoTaskListId={autoTaskListId} selectedProjectId={selectedProjectId}
-                                currentProjectName={currentProjectName} setCurrentProjectName={setCurrentProjectName} isUpdatingName={isUpdatingName} handleUpdateProjectName={handleUpdateProjectName}
+                                selectedProfileName={activeProfileName} 
+                                projects={projects} 
+                                socket={socket} 
+                                jobState={jobState} 
+                                setJobs={setJobs}
+                                createInitialJobState={createInitialJobState} 
+                                autoTaskListId={autoTaskListId} 
+                                selectedProjectId={selectedProjectId}
+                                currentProjectName={currentProjectName} 
+                                setCurrentProjectName={setCurrentProjectName} 
+                                isUpdatingName={isUpdatingName} 
+                                handleUpdateProjectName={handleUpdateProjectName}
+                                profiles={projectsProfiles} // 🚨 PASSED PROFILES
                             />
                             <TaskProgressTable 
                                 results={jobState.results} isProcessing={jobState.isProcessing} isComplete={jobState.isComplete} totalToProcess={jobState.totalToProcess} countdown={jobState.countdown}
