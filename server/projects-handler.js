@@ -441,10 +441,33 @@ const handleStartBulkCreateTasks = async (socket, data) => {
             const trackingData = injectProjectsTracking(dataForThisTask, taskDescription, currentValue, selectedProfileName, realProfile.projects, enableTracking);
             dataForThisTask = trackingData.updatedDataForThisTask;
 
-            const result = await handleCreateSingleTask({
-                portalId, projectId, taskName: primaryField === 'name' ? currentValue : `${taskName}_${i + 1}`, 
-                taskDescription: trackingData.updatedTaskDescription, tasklistId, selectedProfileName, bulkDefaultData: dataForThisTask 
-            }, { apiNameMap, multilineFields }); 
+            // 🚨 SMART RETRY MECHANISM FOR ZOHO CONCURRENCY LIMITS
+            let result;
+            let retryCount = 0;
+            let taskCreated = false;
+
+            while (!taskCreated && retryCount < 3) {
+                if (!activeJobs[jobId] || activeJobs[jobId].status === 'ended') break;
+
+                result = await handleCreateSingleTask({
+                    portalId, projectId, taskName: primaryField === 'name' ? currentValue : `${taskName}_${i + 1}`, 
+                    taskDescription: trackingData.updatedTaskDescription, tasklistId, selectedProfileName, bulkDefaultData: dataForThisTask 
+                }, { apiNameMap, multilineFields }); 
+
+                if (result.success) {
+                    taskCreated = true;
+                } else {
+                    const errStr = String(result.error).toLowerCase();
+                    // If Zoho complains about the task list lock or rate limits, pause and retry
+                    if (errStr.includes('task list') || errStr.includes('tasklist') || errStr.includes('limit') || errStr.includes('timeout')) {
+                        retryCount++;
+                        console.log(`[WARNING] Zoho DB congested (Attempt ${retryCount}/3). Sleeping for 15s to let Zoho breathe...`);
+                        await interruptibleSleep(15000, jobId); // Wait 15 seconds
+                    } else {
+                        break; // Stop retrying if it's a normal error
+                    }
+                }
+            }
             
             // 🚨 2. UPDATE DATABASE AND EMIT RESULT
             let resultData = { projectName: currentValue, profileName: selectedProfileName };

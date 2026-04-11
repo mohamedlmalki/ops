@@ -187,7 +187,11 @@ const handleStartBulkCreate = async (socket, data) => {
             return {
                 name: 'createTicket',
                 data: { email, subject, description, selectedProfileName, sendDirectReply, verifyEmail, displayName, enableTracking, deskConfig, activeProfile, jobId, delay },
-                opts: { delay: scheduledDelay } 
+                opts: { 
+                    delay: scheduledDelay,
+                    removeOnComplete: true,       // 🚨 DELETES FROM RAM INSTANTLY ON SUCCESS
+                    removeOnFail: { count: 100 }  // 🚨 KEEPS ONLY THE LAST 100 FAILS IN RAM
+                } 
             };
         });
 
