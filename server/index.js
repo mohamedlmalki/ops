@@ -26,15 +26,17 @@ const { ticketQueueEvents, ticketQueue } = require('./queue');
 const workerManager = require('./worker'); 
 
 const WORKER_URL = "https://zoho-ops-logger.arfilm47.workers.dev"; 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 80;  // 🚨 Change to Port 80
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: "http://localhost:8080" } });
+// 🚨 Allow your laptop's IP to connect by changing origin to "*"
+const io = new Server(server, { cors: { origin: "*" } }); 
 
 workerManager.setSocketIo(io); 
 
-const REDIRECT_URI = `http://localhost:${PORT}/api/zoho/callback`;
+// 🚨 Tell Zoho to send the login token to your server's IP, not localhost!
+const REDIRECT_URI = `http://104.248.241.244/api/zoho/callback`;
 
 const activeJobs = {};
 deskHandler.setActiveJobs(activeJobs);
@@ -614,6 +616,7 @@ io.on('connection', (socket) => {
         }
     }); 
 
+    // 2. CLEAR SINGLE JOB (Removed the vacuum from here)
     socket.on('clearJob', ({ profileName, jobType }) => {
         try {
             db.deleteJob(profileName, jobType);
@@ -624,11 +627,21 @@ io.on('connection', (socket) => {
         }
     });
 
+    // 3. WIPE ALL (🚨 THIS IS THE ONLY PLACE VACUUM STAYS)
     socket.on('clearAllJobs', ({ jobType }) => {
         try {
+            // 1. Delete only the specific category (e.g. 'desk')
             db.deleteAllJobsByType(jobType); 
+            
+            // 2. 🚨 TELL THE FRONTEND IMMEDIATELY (Before Vacuum locks the DB!)
             io.emit('allJobsCleared', { jobType });
             console.log(`[INFO] Wiped ALL database history for ${jobType}`);
+
+            // 3. 🚨 Wait 1.5 seconds, then quietly shrink the database in the background
+            setTimeout(() => {
+                db.vacuumDatabase(); 
+            }, 1500);
+
         } catch (error) {
             console.error('[DB CLEAR] Error clearing all jobs:', error);
         }
@@ -705,6 +718,14 @@ app.get('/api/test-stop', (req, res) => {
     }
     res.json({ success: true, message: "Test stopped" });
 });
+
+// --- ADD THIS BLOCK TO SERVE THE REACT APP ---
+app.use(express.static(path.join(__dirname, '../dist')));
+
+app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, '../dist/index.html'));
+});
+// ---------------------------------------------
 
 server.listen(PORT, () => {
     console.log(`🚀 Server is running on http://localhost:${PORT}`);

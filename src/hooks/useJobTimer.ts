@@ -1,64 +1,44 @@
 // --- FILE: src/hooks/useJobTimer.ts ---
-
 import { useEffect } from 'react';
-import { 
-    Jobs, InvoiceJobs, CatalystJobs, EmailJobs, QntrlJobs, 
-    PeopleJobs, CreatorJobs, ProjectsJobs, WebinarJobs, ExpenseJobs,
-    BookingJobs, FsmContactJobs
-} from '@/App'; 
 
-// 1. Union of all Job State Objects
-type AnyJobsState = Jobs | InvoiceJobs | CatalystJobs | EmailJobs | QntrlJobs | PeopleJobs | CreatorJobs | ProjectsJobs | WebinarJobs | ExpenseJobs | BookingJobs | FsmContactJobs;
-
-type SetJobsState<T> = React.Dispatch<React.SetStateAction<T>>;
-
-// 2. Added all JobTypes
-type JobType = 'ticket' | 'invoice' | 'catalyst' | 'email' | 'qntrl' | 'people' | 'creator' | 'projects' | 'webinar' | 'expense' | 'bookings' | 'fsm-contact';
-
-export function useJobTimer<T extends AnyJobsState>(
-    jobsState: T, 
-    setJobsState: SetJobsState<T>, 
-    jobType: JobType 
+export function useJobTimer(
+    jobsState: any, 
+    setJobsState: any
 ) {
     useEffect(() => {
-        // ENTERPRISE UPGRADE: This is just a dumb terminal metronome. 
-        // It blindly adds +1 purely for visuals. The Database is the real source of truth now.
+        let lastTick = Date.now();
+
         const intervalId = setInterval(() => {
-            
-            // Use the functional state update to ALWAYS grab the freshest data
-            setJobsState((prevState: any) => {
-                let hasChanges = false;
-                const nextState = { ...prevState };
+            const now = Date.now();
+            const deltaSeconds = Math.round((now - lastTick) / 1000);
 
-                Object.keys(nextState).forEach(profileName => {
-                    const job = nextState[profileName];
+            if (deltaSeconds >= 1) {
+                lastTick = now;
 
-                    // Only tick if the job is actively processing
-                    if (job && job.isProcessing && !job.isPaused) {
-                        hasChanges = true;
+                setJobsState((prevState: any) => {
+                    let hasChanges = false;
+                    const nextState = { ...prevState };
 
-                        // 1. Tick the Stopwatch
-                        const newTime = (job.processingTime || 0) + 1;
+                    Object.keys(nextState).forEach(profileName => {
+                        const job = nextState[profileName];
                         
-                        // 2. Tick the Countdown Timer
-                        const newCountdown = Math.max(0, (job.countdown || 0) - 1);
+                        // 🔥 The logic: If the job is active, we tick.
+                        if (job && job.isProcessing && !job.isPaused && job.status === 'running') {
+                            hasChanges = true;
+                            
+                            nextState[profileName] = {
+                                ...job,
+                                processingTime: (job.processingTime || 0) + deltaSeconds,
+                                countdown: Math.max(0, (job.countdown || 0) - deltaSeconds)
+                            };
+                        }
+                    });
 
-                        nextState[profileName] = {
-                            ...job,
-                            processingTime: newTime,
-                            countdown: newCountdown
-                        };
-                    }
+                    return hasChanges ? nextState : prevState;
                 });
-
-                // If no jobs are running, return prevState (this tells React NOT to re-render)
-                return hasChanges ? nextState : prevState;
-            });
-
+            }
         }, 1000);
 
-        // 🧹 BULLETPROOF CLEANUP: When the page unmounts, strictly kill this exact interval.
         return () => clearInterval(intervalId);
-
-    }, [setJobsState, jobType]);
+    }, [setJobsState]);
 }

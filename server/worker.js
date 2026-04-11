@@ -95,7 +95,7 @@ const hireCashier = (profileName) => {
 
     }, { 
         connection: connection, 
-        concurrency: 2,         
+        concurrency: 1,         
         lockDuration: 90000     
     });
 

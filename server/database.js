@@ -3,11 +3,15 @@ const Database = require('better-sqlite3');
 const path = require('path');
 
 const dbPath = path.join(__dirname, 'zoho_jobs.db');
-const db = new Database(dbPath);
+
+// 🚨 ENTERPRISE UPGRADE 1: The "Waiting Room" for heavy traffic
+const db = new Database(dbPath, { timeout: 7000 });
 
 db.pragma('journal_mode = WAL');
+db.pragma('synchronous = NORMAL');
+db.pragma('busy_timeout = 7000');
 
-// ENTERPRISE UPGRADE: Added processingTime and processingStartTime columns
+// ENTERPRISE UPGRADE 2: Added processingTime and processingStartTime columns
 db.prepare(`
     CREATE TABLE IF NOT EXISTS jobs (
         id TEXT PRIMARY KEY,
@@ -66,7 +70,7 @@ module.exports = {
         stmt.run(status, consecutiveFailures, JSON.stringify(resultsArray), id);
     },
 
-    // ENTERPRISE UPGRADE: The Database acts as the stopwatch natively!
+    // ENTERPRISE UPGRADE 3: The Database acts as the stopwatch natively!
     updateJobStatusByProfile: (profileName, jobType, status) => {
         const job = db.prepare(`SELECT * FROM jobs WHERE profileName = ? AND jobType = ?`).get(profileName, jobType);
         if (!job) return;
@@ -125,5 +129,15 @@ module.exports = {
 
     deleteAllJobsByType: (jobType) => {
         db.prepare(`DELETE FROM jobs WHERE jobType = ?`).run(jobType);
+    }, // <-- Notice the comma here!
+
+    // 🚨 ENTERPRISE UPGRADE 4: The auto-shrinker
+    vacuumDatabase: () => {
+        try {
+            db.exec('VACUUM');
+            console.log('[INFO] 🧹 Database automatically shrunk (VACUUM successful).');
+        } catch (error) {
+            console.error('[ERROR] Could not vacuum database:', error.message);
+        }
     }
 };
