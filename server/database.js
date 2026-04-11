@@ -2,14 +2,12 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 
-// Create or connect to the SQLite database file in the server folder
 const dbPath = path.join(__dirname, 'zoho_jobs.db');
 const db = new Database(dbPath);
 
-// Optimize database for speed
 db.pragma('journal_mode = WAL');
 
-// Initialize the table if it doesn't exist
+// ENTERPRISE UPGRADE: Added processingTime and processingStartTime columns
 db.prepare(`
     CREATE TABLE IF NOT EXISTS jobs (
         id TEXT PRIMARY KEY,
@@ -19,18 +17,24 @@ db.prepare(`
         totalToProcess INTEGER DEFAULT 0,
         consecutiveFailures INTEGER DEFAULT 0,
         stopAfterFailures INTEGER DEFAULT 0,
+        processingTime INTEGER DEFAULT 0,
+        processingStartTime INTEGER,
         formData TEXT,
         results TEXT,
         updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
     )
 `).run();
 
+// Safety fallback: Automatically inject columns if user forgets to delete the old DB file
+try { db.prepare(`ALTER TABLE jobs ADD COLUMN processingTime INTEGER DEFAULT 0`).run(); } catch(e) {}
+try { db.prepare(`ALTER TABLE jobs ADD COLUMN processingStartTime INTEGER`).run(); } catch(e) {}
+
 module.exports = {
-    // Create or update a full job
     upsertJob: (job) => {
+        const now = Date.now();
         const stmt = db.prepare(`
-            INSERT INTO jobs (id, profileName, jobType, status, totalToProcess, consecutiveFailures, stopAfterFailures, formData, results, updatedAt)
-            VALUES (@id, @profileName, @jobType, @status, @totalToProcess, @consecutiveFailures, @stopAfterFailures, @formData, @results, CURRENT_TIMESTAMP)
+            INSERT INTO jobs (id, profileName, jobType, status, totalToProcess, consecutiveFailures, stopAfterFailures, processingTime, processingStartTime, formData, results, updatedAt)
+            VALUES (@id, @profileName, @jobType, @status, @totalToProcess, @consecutiveFailures, @stopAfterFailures, @processingTime, @processingStartTime, @formData, @results, CURRENT_TIMESTAMP)
             ON CONFLICT(id) DO UPDATE SET
                 status = excluded.status,
                 consecutiveFailures = excluded.consecutiveFailures,
@@ -46,12 +50,13 @@ module.exports = {
             totalToProcess: job.totalToProcess || 0,
             consecutiveFailures: job.consecutiveFailures || 0,
             stopAfterFailures: job.stopAfterFailures || 0,
+            processingTime: job.processingTime || 0,
+            processingStartTime: job.status === 'running' ? now : null,
             formData: JSON.stringify(job.formData || {}),
             results: JSON.stringify(job.results || [])
         });
     },
 
-    // Fast update just for appending results and updating status
     updateJobProgress: (id, status, consecutiveFailures, resultsArray) => {
         const stmt = db.prepare(`
             UPDATE jobs 
@@ -61,11 +66,31 @@ module.exports = {
         stmt.run(status, consecutiveFailures, JSON.stringify(resultsArray), id);
     },
 
-    updateJobStatus: (id, status) => {
-        db.prepare(`UPDATE jobs SET status = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?`).run(status, id);
+    // ENTERPRISE UPGRADE: The Database acts as the stopwatch natively!
+    updateJobStatusByProfile: (profileName, jobType, status) => {
+        const job = db.prepare(`SELECT * FROM jobs WHERE profileName = ? AND jobType = ?`).get(profileName, jobType);
+        if (!job) return;
+
+        let newTime = job.processingTime || 0;
+        let newStartTime = job.processingStartTime;
+        const now = Date.now();
+
+        // Calculate time when pausing, stopping, or finishing
+        if (status === 'paused' || status === 'complete' || status === 'ended') {
+            if (job.status === 'running' && newStartTime) {
+                newTime += Math.floor((now - newStartTime) / 1000);
+            }
+            newStartTime = null;
+        } else if (status === 'running') {
+            if (job.status !== 'running') {
+                newStartTime = now;
+            }
+        }
+
+        db.prepare(`UPDATE jobs SET status = ?, processingTime = ?, processingStartTime = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?`)
+          .run(status, newTime, newStartTime, job.id);
     },
 
-    // Get a specific job
     getJobById: (id) => {
         const row = db.prepare(`SELECT * FROM jobs WHERE id = ?`).get(id);
         if (!row) return null;
@@ -76,22 +101,28 @@ module.exports = {
         };
     },
 
-    // For the UI Handshake: Get all jobs so the UI knows where to resume
     getAllJobs: () => {
         const rows = db.prepare(`SELECT * FROM jobs`).all();
-        return rows.map(row => ({
-            ...row,
-            formData: JSON.parse(row.formData),
-            results: JSON.parse(row.results)
-        }));
+        const now = Date.now();
+        return rows.map(row => {
+            let currentProcessingTime = row.processingTime || 0;
+            // Add live active time to the saved time to get exact accuracy on refresh
+            if (row.status === 'running' && row.processingStartTime) {
+                currentProcessingTime += Math.floor((now - row.processingStartTime) / 1000);
+            }
+            return {
+                ...row,
+                processingTime: currentProcessingTime,
+                formData: JSON.parse(row.formData),
+                results: JSON.parse(row.results)
+            };
+        });
     },
 
-    // Clear specific account (Button 1)
     deleteJob: (profileName, jobType) => {
         db.prepare(`DELETE FROM jobs WHERE profileName = ? AND jobType = ?`).run(profileName, jobType);
     },
 
-    // Clear all accounts for a module (Button 2)
     deleteAllJobsByType: (jobType) => {
         db.prepare(`DELETE FROM jobs WHERE jobType = ?`).run(jobType);
     }

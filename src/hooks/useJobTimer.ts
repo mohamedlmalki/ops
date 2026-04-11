@@ -1,146 +1,64 @@
 // --- FILE: src/hooks/useJobTimer.ts ---
-import { useEffect, useRef } from 'react';
+
+import { useEffect } from 'react';
 import { 
     Jobs, InvoiceJobs, CatalystJobs, EmailJobs, QntrlJobs, 
-    PeopleJobs, CreatorJobs, ProjectsJobs, WebinarJobs, ExpenseJobs 
+    PeopleJobs, CreatorJobs, ProjectsJobs, WebinarJobs, ExpenseJobs,
+    BookingJobs, FsmContactJobs
 } from '@/App'; 
 
-// 1. Union of all Job State Types
-type AnyJobState = 
-    | Jobs[keyof Jobs] 
-    | InvoiceJobs[keyof InvoiceJobs] 
-    | CatalystJobs[keyof CatalystJobs] 
-    | EmailJobs[keyof EmailJobs]
-    | QntrlJobs[keyof QntrlJobs]
-    | PeopleJobs[keyof PeopleJobs]
-    | CreatorJobs[keyof CreatorJobs]
-    | ProjectsJobs[keyof ProjectsJobs]
-    | WebinarJobs[keyof WebinarJobs]
-    | ExpenseJobs[keyof ExpenseJobs];
-
-// 2. Union of all Job State Objects
-type AnyJobsState = Jobs | InvoiceJobs | CatalystJobs | EmailJobs | QntrlJobs | PeopleJobs | CreatorJobs | ProjectsJobs | WebinarJobs | ExpenseJobs;
+// 1. Union of all Job State Objects
+type AnyJobsState = Jobs | InvoiceJobs | CatalystJobs | EmailJobs | QntrlJobs | PeopleJobs | CreatorJobs | ProjectsJobs | WebinarJobs | ExpenseJobs | BookingJobs | FsmContactJobs;
 
 type SetJobsState<T> = React.Dispatch<React.SetStateAction<T>>;
 
-// 3. Added 'expense' to JobType
-type JobType = 'ticket' | 'invoice' | 'catalyst' | 'email' | 'qntrl' | 'people' | 'creator' | 'projects' | 'webinar' | 'expense';
+// 2. Added all JobTypes
+type JobType = 'ticket' | 'invoice' | 'catalyst' | 'email' | 'qntrl' | 'people' | 'creator' | 'projects' | 'webinar' | 'expense' | 'bookings' | 'fsm-contact';
 
 export function useJobTimer<T extends AnyJobsState>(
     jobsState: T, 
     setJobsState: SetJobsState<T>, 
     jobType: JobType 
 ) {
-    const timersRef = useRef<{ 
-        [key: string]: { 
-            processing?: NodeJS.Timeout, 
-            countdown?: NodeJS.Timeout,
-            lastTickProcessing?: number, 
-            lastTickCountdown?: number   
-        } 
-    }>({});
-
-    // 🚀 THE FIX: This effect ONLY checks if a timer needs to be started or stopped.
-    // It NO LONGER wipes out all the other timers when one account updates!
     useEffect(() => {
-        const timers = timersRef.current;
+        // ENTERPRISE UPGRADE: This is just a dumb terminal metronome. 
+        // It blindly adds +1 purely for visuals. The Database is the real source of truth now.
+        const intervalId = setInterval(() => {
+            
+            // Use the functional state update to ALWAYS grab the freshest data
+            setJobsState((prevState: any) => {
+                let hasChanges = false;
+                const nextState = { ...prevState };
 
-        Object.keys(jobsState).forEach(profileName => {
-            const job = jobsState[profileName as keyof T] as AnyJobState | undefined;
-            const timerKey = `${profileName}_${jobType}`;
+                Object.keys(nextState).forEach(profileName => {
+                    const job = nextState[profileName];
 
-            if (!job) return;
-            if (!timers[timerKey]) timers[timerKey] = {};
+                    // Only tick if the job is actively processing
+                    if (job && job.isProcessing && !job.isPaused) {
+                        hasChanges = true;
 
-            const isProcessingTimerRunning = !!timers[timerKey].processing;
-            const isCountdownTimerRunning = !!timers[timerKey].countdown;
+                        // 1. Tick the Stopwatch
+                        const newTime = (job.processingTime || 0) + 1;
+                        
+                        // 2. Tick the Countdown Timer
+                        const newCountdown = Math.max(0, (job.countdown || 0) - 1);
 
-            // --- 1. PROCESSING TIMER (Total Time Elapsed) ---
-            if (job.isProcessing && !job.isPaused && !isProcessingTimerRunning) {
-                timers[timerKey].lastTickProcessing = Date.now();
-                
-                timers[timerKey].processing = setInterval(() => {
-                    const now = Date.now();
-                    const lastTick = timers[timerKey].lastTickProcessing || now;
-                    const deltaMs = now - lastTick;
-
-                    if (deltaMs >= 1000) {
-                        const deltaSeconds = Math.floor(deltaMs / 1000);
-                        timers[timerKey].lastTickProcessing = now - (deltaMs % 1000);
-
-                        setJobsState(prev => {
-                            const currentJob = prev[profileName as keyof T];
-                            if (!currentJob || !currentJob.isProcessing || currentJob.isPaused) {
-                                return prev;
-                            }
-                            return {
-                                ...prev,
-                                [profileName]: {
-                                    ...currentJob,
-                                    processingTime: (currentJob.processingTime || 0) + deltaSeconds
-                                }
-                            };
-                        });
+                        nextState[profileName] = {
+                            ...job,
+                            processingTime: newTime,
+                            countdown: newCountdown
+                        };
                     }
-                }, 1000);
-            } else if ((!job.isProcessing || job.isPaused) && isProcessingTimerRunning) {
-                clearInterval(timers[timerKey].processing);
-                delete timers[timerKey].processing;
-                delete timers[timerKey].lastTickProcessing;
-            }
+                });
 
-            // --- 2. COUNTDOWN TIMER (Delay between batches) ---
-            if (job.isProcessing && !job.isPaused && job.countdown > 0 && !isCountdownTimerRunning) {
-                timers[timerKey].lastTickCountdown = Date.now();
-
-                timers[timerKey].countdown = setInterval(() => {
-                    const now = Date.now();
-                    const lastTick = timers[timerKey].lastTickCountdown || now;
-                    const deltaMs = now - lastTick;
-
-                    if (deltaMs >= 1000) {
-                        const deltaSeconds = Math.floor(deltaMs / 1000);
-                        timers[timerKey].lastTickCountdown = now - (deltaMs % 1000);
-
-                        setJobsState(prev => {
-                            const currentJob = prev[profileName as keyof T];
-                            if (!currentJob || currentJob.countdown <= 0) {
-                                if (timers[timerKey]?.countdown) {
-                                    clearInterval(timers[timerKey].countdown);
-                                    delete timers[timerKey].countdown;
-                                    delete timers[timerKey].lastTickCountdown;
-                                }
-                                return prev;
-                            }
-                            
-                            const newCountdown = Math.max(0, currentJob.countdown - deltaSeconds);
-                            return { 
-                                ...prev, 
-                                [profileName]: { 
-                                    ...currentJob, 
-                                    countdown: newCountdown 
-                                } 
-                            };
-                        });
-                    }
-                }, 1000);
-            } else if ((job.countdown <= 0 || !job.isProcessing || job.isPaused) && isCountdownTimerRunning) {
-                clearInterval(timers[timerKey].countdown);
-                delete timers[timerKey].countdown;
-                delete timers[timerKey].lastTickCountdown;
-            }
-        });
-    }, [jobsState, setJobsState, jobType]);
-
-    // 🧹 SAFETY CLEANUP: Only destroy the timers if you completely close the webpage.
-    useEffect(() => {
-        return () => {
-            const timers = timersRef.current;
-            Object.values(timers).forEach(t => {
-                if (t.processing) clearInterval(t.processing);
-                if (t.countdown) clearInterval(t.countdown);
+                // If no jobs are running, return prevState (this tells React NOT to re-render)
+                return hasChanges ? nextState : prevState;
             });
-            timersRef.current = {};
-        };
-    }, []);
+
+        }, 1000);
+
+        // 🧹 BULLETPROOF CLEANUP: When the page unmounts, strictly kill this exact interval.
+        return () => clearInterval(intervalId);
+
+    }, [setJobsState, jobType]);
 }

@@ -23,7 +23,7 @@ const db = require('./database');
 require('dotenv').config();
 
 const { ticketQueueEvents, ticketQueue } = require('./queue');
-const workerManager = require('./worker'); // Starts the background factory worker and saves it
+const workerManager = require('./worker'); 
 
 const WORKER_URL = "https://zoho-ops-logger.arfilm47.workers.dev"; 
 const PORT = process.env.PORT || 3000;
@@ -32,12 +32,10 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "http://localhost:8080" } });
 
-// 👈 THIS PLUGS THE WALKIE TALKIE IN
 workerManager.setSocketIo(io); 
 
 const REDIRECT_URI = `http://localhost:${PORT}/api/zoho/callback`;
 
-// Register active jobs object with all handlers
 const activeJobs = {};
 deskHandler.setActiveJobs(activeJobs);
 catalystHandler.setActiveJobs(activeJobs);
@@ -53,6 +51,11 @@ const authStates = {};
 
 app.use(cors());
 app.use(express.json());
+
+// Helper to safely update Database if Enterprise DB is installed
+const updateDbStatus = (profileName, jobType, status) => {
+    try { if (db.updateJobStatusByProfile) db.updateJobStatusByProfile(profileName, jobType, status); } catch (e) {}
+};
 
 // --- ZOHO AUTH FLOW ---
 app.post('/api/zoho/auth', (req, res) => {
@@ -330,7 +333,7 @@ app.delete('/api/profiles/:profileNameToDelete', (req, res) => {
 });
 
 // ==========================================
-// 🚨 THE JSON FIX: REDIS WALKIE-TALKIE
+// 🚨 ENTERPRISE QUEUE REFEREE
 // ==========================================
 ticketQueueEvents.on('completed', async ({ jobId, returnvalue }) => {
     if (!returnvalue) return;
@@ -344,13 +347,14 @@ ticketQueueEvents.on('completed', async ({ jobId, returnvalue }) => {
 
     if (parsedResult && parsedResult.success) {
         io.emit('ticketResult', parsedResult);
-    } else if (parsedResult && parsedResult.ignored) {
-        // Do nothing if it was cancelled
     }
     
     const waiting = await ticketQueue.getWaitingCount();
     const active = await ticketQueue.getActiveCount();
-    if (waiting === 0 && active === 0 && parsedResult && parsedResult.profileName) {
+    
+    // 🚨 FIX: BullMQ can leave active=1 for a split second after completing. <= 1 safely catches it!
+    if (waiting === 0 && active <= 1 && parsedResult && parsedResult.profileName) {
+        updateDbStatus(parsedResult.profileName, 'ticket', 'complete');
         io.emit('bulkComplete', { profileName: parsedResult.profileName, jobType: 'ticket' });
     }
 });
@@ -362,7 +366,9 @@ ticketQueueEvents.on('failed', async ({ jobId, failedReason }) => {
 
         const waiting = await ticketQueue.getWaitingCount();
         const active = await ticketQueue.getActiveCount();
-        if (waiting === 0 && active === 0 && errorData.profileName) {
+        
+        if (waiting === 0 && active <= 1 && errorData.profileName) {
+            updateDbStatus(errorData.profileName, 'ticket', 'complete');
             io.emit('bulkComplete', { profileName: errorData.profileName, jobType: 'ticket' });
         }
     } catch(e) { }
@@ -445,6 +451,7 @@ io.on('connection', (socket) => {
     socket.on('pauseJob', ({ profileName, jobType }) => {
         const jobId = findJobKey(profileName, jobType);
         if (jobId && activeJobs[jobId]) activeJobs[jobId].status = 'paused';
+        updateDbStatus(profileName, jobType, 'paused');
     });
 
     socket.on('resumeJob', ({ profileName, jobType }) => {
@@ -456,6 +463,7 @@ io.on('connection', (socket) => {
             socket.emit('bulkError', { profileName, jobType, message: "Job session lost. Please clear your completed items and click Start again to continue." });
             socket.emit('bulkEnded', { profileName, jobType });
         }
+        updateDbStatus(profileName, jobType, 'running');
     });
 
     socket.on('endJob', async ({ profileName, jobType }) => {
@@ -465,21 +473,23 @@ io.on('connection', (socket) => {
         }
         
         console.log(`\n[INFO] 🛑 User clicked End Job for ${profileName}. Stopping factory...`);
+        updateDbStatus(profileName, jobType, 'ended');
         
         try {
-            // 1. Instantly wipe the conveyor belt so the worker stops checking tickets
             const { Queue } = require('bullmq');
             const { connection } = require('./worker');
             const queueName = jobType === 'ticket' ? `ticketQueue_${profileName}` : `${jobType}Queue_${profileName}`;
             const accountQueue = new Queue(queueName, { connection });
-            
             await accountQueue.drain(true); 
         } catch(e) {
             console.error("Error draining queue:", e);
         }
         
-        // 2. Tell React to close the table and stop the timer instantly!
         io.emit('bulkEnded', { profileName, jobType });
+    });
+
+    socket.on('markJobComplete', ({ profileName, jobType }) => {
+        updateDbStatus(profileName, jobType, 'complete');
     });
 
     socket.on('disconnect', () => {
@@ -500,20 +510,21 @@ io.on('connection', (socket) => {
         else { socket.emit('deleteBookingServiceResult', { success: false, error: "Profile not found." }); }
     });
     
+    // 🚨 FIX: Emit 'jobStarted' before delegating, so React instantly wipes memory and resets UI
     const deskListeners = { 'startBulkCreate': deskHandler.handleStartBulkCreate, 'getEmailFailures': deskHandler.handleGetEmailFailures, 'clearEmailFailures': deskHandler.handleClearEmailFailures, 'clearTicketLogs': (socket) => {}, 'getMailReplyAddressDetails': deskHandler.handleGetMailReplyAddressDetails, 'updateMailReplyAddressDetails': deskHandler.handleUpdateMailReplyAddressDetails };
-    for (const [event, handler] of Object.entries(deskListeners)) { socket.on(event, (data) => { const profiles = readProfiles(); const activeProfile = data ? profiles.find(p => p.profileName === data.selectedProfileName) : null; if (activeProfile) handler(liveSocket, { ...data, activeProfile }); }); }
+    for (const [event, handler] of Object.entries(deskListeners)) { socket.on(event, (data) => { const profiles = readProfiles(); const activeProfile = data ? profiles.find(p => p.profileName === data.selectedProfileName) : null; if (activeProfile) { if (event.startsWith('startBulk')) io.emit('jobStarted', { profileName: data.selectedProfileName, jobType: 'ticket' }); handler(liveSocket, { ...data, activeProfile }); } }); }
     
     const catalystListeners = { 'startBulkSignup': catalystHandler.handleStartBulkSignup, 'startBulkEmail': catalystHandler.handleStartBulkEmail, 'getUsers': catalystHandler.handleGetUsers, 'deleteUser': catalystHandler.handleDeleteUser, 'deleteUsers': catalystHandler.handleDeleteUsers };
-    for (const [event, handler] of Object.entries(catalystListeners)) { socket.on(event, (data) => { const profiles = readProfiles(); const activeProfile = data ? profiles.find(p => p.profileName === data.selectedProfileName) : null; if (activeProfile) handler(liveSocket, { ...data, activeProfile }); }); }
+    for (const [event, handler] of Object.entries(catalystListeners)) { socket.on(event, (data) => { const profiles = readProfiles(); const activeProfile = data ? profiles.find(p => p.profileName === data.selectedProfileName) : null; if (activeProfile) { if (event === 'startBulkSignup') io.emit('jobStarted', { profileName: data.selectedProfileName, jobType: 'catalyst' }); if (event === 'startBulkEmail') io.emit('jobStarted', { profileName: data.selectedProfileName, jobType: 'email' }); handler(liveSocket, { ...data, activeProfile }); } }); }
 
     const qntrlListeners = { 'getQntrlForms': qntrlHandler.handleGetForms, 'getQntrlFormDetails': qntrlHandler.handleGetFormDetails, 'createQntrlCard': qntrlHandler.handleCreateCard, 'startBulkCreateCards': qntrlHandler.handleStartBulkCreateCards };
-    for (const [event, handler] of Object.entries(qntrlListeners)) { socket.on(event, (data) => { const profiles = readProfiles(); const activeProfile = data ? profiles.find(p => p.profileName === data.selectedProfileName) : null; if (activeProfile) handler(liveSocket, { ...data, activeProfile }); }); }
+    for (const [event, handler] of Object.entries(qntrlListeners)) { socket.on(event, (data) => { const profiles = readProfiles(); const activeProfile = data ? profiles.find(p => p.profileName === data.selectedProfileName) : null; if (activeProfile) { if (event.startsWith('startBulk')) io.emit('jobStarted', { profileName: data.selectedProfileName, jobType: 'qntrl' }); handler(liveSocket, { ...data, activeProfile }); } }); }
 
     const peopleListeners = { 'getPeopleForms': peopleHandler.handleGetForms, 'getPeopleFormComponents': peopleHandler.handleGetFormComponents, 'insertPeopleRecord': peopleHandler.handleInsertRecord, 'startBulkInsertPeopleRecords': peopleHandler.handleStartBulkInsertRecords };
-    for (const [event, handler]of Object.entries(peopleListeners)) { socket.on(event, (data) => { const profiles = readProfiles(); const activeProfile = data ? profiles.find(p => p.profileName === data.selectedProfileName) : null; if (activeProfile) { handler(liveSocket, { ...data, activeProfile }); } else { socket.emit('bulkError', { message: 'Active profile not found.' }); } }); }
+    for (const [event, handler]of Object.entries(peopleListeners)) { socket.on(event, (data) => { const profiles = readProfiles(); const activeProfile = data ? profiles.find(p => p.profileName === data.selectedProfileName) : null; if (activeProfile) { if (event.startsWith('startBulk')) io.emit('jobStarted', { profileName: data.selectedProfileName, jobType: 'people' }); handler(liveSocket, { ...data, activeProfile }); } else { socket.emit('bulkError', { message: 'Active profile not found.' }); } }); }
 
     const creatorListeners = { 'getCreatorForms': creatorHandler.handleGetForms, 'getCreatorFormComponents': creatorHandler.handleGetFormComponents, 'insertCreatorRecord': creatorHandler.handleInsertRecord, 'startBulkInsertCreatorRecords': creatorHandler.handleStartBulkInsertCreatorRecords };
-    for (const [event, handler] of Object.entries(creatorListeners)) { socket.on(event, (data) => { const profiles = readProfiles(); const activeProfile = data ? profiles.find(p => p.profileName === data.selectedProfileName) : null; if (activeProfile) { if (typeof handler === 'function') { handler(liveSocket, { ...data, activeProfile }); } else { socket.emit('bulkError', { message: `Server error: Event ${event} is not configured.` }); } } else { socket.emit('bulkError', { message: 'Active profile not found.' }); } }); }
+    for (const [event, handler] of Object.entries(creatorListeners)) { socket.on(event, (data) => { const profiles = readProfiles(); const activeProfile = data ? profiles.find(p => p.profileName === data.selectedProfileName) : null; if (activeProfile) { if (event.startsWith('startBulk')) io.emit('jobStarted', { profileName: data.selectedProfileName, jobType: 'creator' }); if (typeof handler === 'function') { handler(liveSocket, { ...data, activeProfile }); } else { socket.emit('bulkError', { message: `Server error: Event ${event} is not configured.` }); } } else { socket.emit('bulkError', { message: 'Active profile not found.' }); } }); }
 
     const projectsListeners = { 
         'getProjectsProjects': projectsHandler.handleGetProjects, 
@@ -531,16 +542,17 @@ io.on('connection', (socket) => {
             const profiles = readProfiles(); 
             const activeProfile = data ? profiles.find(p => p.profileName === data.selectedProfileName) : null; 
             if (activeProfile) { 
+                if (event.startsWith('startBulk')) io.emit('jobStarted', { profileName: data.selectedProfileName, jobType: 'projects' });
                 if (typeof handler === 'function') { handler(liveSocket, { ...data, activeProfile }); } else { socket.emit('bulkError', { message: `Server error: Event ${event} is not configured.'` }); } 
             } else { socket.emit('bulkError', { message: 'Active profile not found.' }); } 
         }); 
     }
 
     const meetingListeners = { 'fetchWebinars': meetingHandler.handleGetWebinars, 'startBulkRegistration': meetingHandler.handleStartBulkRegistration };
-    for (const [event, handler] of Object.entries(meetingListeners)) { socket.on(event, (data) => { const profiles = readProfiles(); const activeProfile = data ? profiles.find(p => p.profileName === data.selectedProfileName) : null; if (activeProfile) { if (typeof handler === 'function') { handler(liveSocket, { ...data, activeProfile }); } else { socket.emit('bulkError', { message: `Server error: Event ${event} is not configured.` }); } } else { socket.emit('bulkError', { message: 'Active profile not found.' }); } }); }
+    for (const [event, handler] of Object.entries(meetingListeners)) { socket.on(event, (data) => { const profiles = readProfiles(); const activeProfile = data ? profiles.find(p => p.profileName === data.selectedProfileName) : null; if (activeProfile) { if (event.startsWith('startBulk')) io.emit('jobStarted', { profileName: data.selectedProfileName, jobType: 'webinar' }); if (typeof handler === 'function') { handler(liveSocket, { ...data, activeProfile }); } else { socket.emit('bulkError', { message: `Server error: Event ${event} is not configured.` }); } } else { socket.emit('bulkError', { message: 'Active profile not found.' }); } }); }
 
     const fsmListeners = { 'startBulkFsmContact': fsmHandler.handleStartBulkCreateContact };
-    for (const [event, handler] of Object.entries(fsmListeners)) { socket.on(event, (data) => { const profiles = readProfiles(); const activeProfile = data ? profiles.find(p => p.profileName === data.selectedProfileName) : null; if (activeProfile) { handler(liveSocket, { ...data, activeProfile }); } else { socket.emit('bulkError', { message: 'Active profile not found.' }); } }); }
+    for (const [event, handler] of Object.entries(fsmListeners)) { socket.on(event, (data) => { const profiles = readProfiles(); const activeProfile = data ? profiles.find(p => p.profileName === data.selectedProfileName) : null; if (activeProfile) { if (event.startsWith('startBulk')) io.emit('jobStarted', { profileName: data.selectedProfileName, jobType: 'fsm-contact' }); handler(liveSocket, { ...data, activeProfile }); } else { socket.emit('bulkError', { message: 'Active profile not found.' }); } }); }
 
     socket.on('fetchBookingServices', (data) => { 
         const profiles = readProfiles(); 
@@ -555,7 +567,10 @@ io.on('connection', (socket) => {
     socket.on('startBulkBooking', (data) => {
         const profiles = readProfiles(); 
         const activeProfile = data ? profiles.find(p => p.profileName === data.selectedProfileName) : null;
-        if(activeProfile) bookingsHandler.handleStartBulkBooking(liveSocket, { ...data, activeProfile });
+        if(activeProfile) {
+            io.emit('jobStarted', { profileName: data.selectedProfileName, jobType: 'bookings' });
+            bookingsHandler.handleStartBulkBooking(liveSocket, { ...data, activeProfile });
+        }
     });
     socket.on('createBookingService', (data) => {
         const profiles = readProfiles();
@@ -589,17 +604,37 @@ io.on('connection', (socket) => {
         if (activeProfile) { bookingsHandler.handleUpdateBookingStaff(liveSocket, { ...data, activeProfile }); } 
         else { socket.emit('updateBookingStaffResult', { success: false, error: "Profile not found." }); }
     });
-	
-	socket.on('requestDatabaseSync', () => {
-    try {
-        const allJobs = db.getAllJobs();
-        socket.emit('databaseSync', allJobs);
-    } catch (error) {
-        console.error('[DB SYNC] Error fetching state:', error);
-    }
-});
-	
-	
+    
+    socket.on('requestDatabaseSync', () => {
+        try {
+            const allJobs = db.getAllJobs();
+            socket.emit('databaseSync', allJobs);
+        } catch (error) {
+            console.error('[DB SYNC] Error fetching state:', error);
+        }
+    }); 
+
+    socket.on('clearJob', ({ profileName, jobType }) => {
+        try {
+            db.deleteJob(profileName, jobType);
+            io.emit('jobCleared', { profileName, jobType });
+            console.log(`[INFO] Cleared database history for ${profileName} (${jobType})`);
+        } catch (error) {
+            console.error('[DB CLEAR] Error clearing job:', error);
+        }
+    });
+
+    socket.on('clearAllJobs', ({ jobType }) => {
+        try {
+            db.deleteAllJobsByType(jobType); 
+            io.emit('allJobsCleared', { jobType });
+            console.log(`[INFO] Wiped ALL database history for ${jobType}`);
+        } catch (error) {
+            console.error('[DB CLEAR] Error clearing all jobs:', error);
+        }
+    });
+    
+    
 });
 
 const fsPromises = require('fs').promises;

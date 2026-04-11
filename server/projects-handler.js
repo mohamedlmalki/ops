@@ -388,15 +388,15 @@ const handleStartBulkCreateTasks = async (socket, data) => {
             if (!activeJobs[jobId] || activeJobs[jobId].status === 'ended') break;
             
             while (activeJobs[jobId]?.status === 'paused') {
-                db.updateJobStatus(jobId, 'paused');
+                db.updateJobStatusByProfile(selectedProfileName, 'projects', 'paused');
                 await new Promise(resolve => setTimeout(resolve, 500));
             }
-            db.updateJobStatus(jobId, 'running');
+            db.updateJobStatusByProfile(selectedProfileName, 'projects', 'running');
 
             if (activeJobs[jobId].stopAfterFailures > 0 && activeJobs[jobId].consecutiveFailures >= activeJobs[jobId].stopAfterFailures) {
                  if (activeJobs[jobId].status !== 'paused') {
                      activeJobs[jobId].status = 'paused';
-                     db.updateJobStatus(jobId, 'paused');
+                     db.updateJobStatusByProfile(selectedProfileName, 'projects', 'paused');
                      socket.emit('jobPaused', { profileName: selectedProfileName, reason: `Paused automatically after failures.` });
                  }
                  while (activeJobs[jobId]?.status === 'paused') await new Promise(resolve => setTimeout(resolve, 500));
@@ -461,15 +461,15 @@ const handleStartBulkCreateTasks = async (socket, data) => {
             socket.emit('projectsResult', resultData);
         }
     } catch (error) {
-        db.updateJobStatus(jobId, 'error');
+        db.updateJobStatusByProfile(selectedProfileName, 'projects', 'error');
         socket.emit('bulkError', { message: error.message, profileName: selectedProfileName, jobType: 'projects' });
     } finally {
         if (activeJobs[jobId]) {
             if (activeJobs[jobId].status === 'ended') {
-                db.updateJobStatus(jobId, 'ended');
+                db.updateJobStatusByProfile(selectedProfileName, 'projects', 'ended');
                 socket.emit('bulkEnded', { profileName: selectedProfileName, jobType: 'projects' });
             } else {
-                db.updateJobStatus(jobId, 'complete');
+                db.updateJobStatusByProfile(selectedProfileName, 'projects', 'complete');
                 socket.emit('bulkComplete', { profileName: selectedProfileName, jobType: 'projects' });
             }
             delete activeJobs[jobId];
@@ -770,6 +770,6 @@ module.exports = {
     handleGetProjectDetails,
     handleCreateTaskField,
     handleUpdateTaskField,
-    handleClearJob,         // Export new
-    handleClearAllJobs      // Export new
+    handleClearJob,         
+    handleClearAllJobs      
 };

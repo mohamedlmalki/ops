@@ -230,7 +230,7 @@ export interface JobState {
   processingTime: number; 
   totalTicketsToProcess: number;
   countdown: number;
-  currentDelay: 1;
+  currentDelay: number;
   filterText: string;
 }
 export interface InvoiceJobState {
@@ -476,7 +476,6 @@ const MainApp = () => {
     const { toast } = useToast();
     const location = useLocation();
     
-    // 🚨 REPLACED `usePersistentJobs` with standard React `useState`. The DB manages memory now!
     const [jobs, setJobs] = useState<Jobs>({});
     const [invoiceJobs, setInvoiceJobs] = useState<InvoiceJobs>({});
     const [catalystJobs, setCatalystJobs] = useState<CatalystJobs>({}); 
@@ -564,7 +563,6 @@ const MainApp = () => {
 
         socket.on('connect', () => {
             toast({ title: "Connected to server!" });
-            // 🚨 REQUEST THE DATABASE TRUTH ON LOAD
             socket.emit('requestDatabaseSync'); 
         });
           
@@ -576,26 +574,100 @@ const MainApp = () => {
         };
         document.addEventListener("visibilitychange", handleWakeUp);
 
-        // 🚨 RECEIVE THE DATABASE TRUTH AND UPDATE UI EXACTLY
+        const getInitialState = (type: string) => {
+            switch(type) {
+                case 'ticket': return createInitialJobState();
+                case 'invoice': return createInitialInvoiceJobState();
+                case 'catalyst': return createInitialCatalystJobState();
+                case 'email': return createInitialEmailJobState();
+                case 'qntrl': return createInitialQntrlJobState();
+                case 'people': return createInitialPeopleJobState();
+                case 'creator': return createInitialCreatorJobState();
+                case 'projects': return createInitialProjectsJobState();
+                case 'webinar': return createInitialWebinarJobState();
+                case 'fsm-contact': return createInitialFsmContactJobState();
+                case 'bookings': return createInitialBookingJobState();
+                default: return {} as any;
+            }
+        };
+
+        socket.on('jobStarted', ({ profileName, jobType }) => {
+            const startUpdater = (prev: any) => {
+                const job = prev[profileName] || getInitialState(jobType);
+                return { 
+                    ...prev, 
+                    [profileName]: { 
+                        ...job, 
+                        results: [], 
+                        isProcessing: true, 
+                        isPaused: false, 
+                        isComplete: false, 
+                        processingTime: 0, 
+                        processingStartTime: new Date(),
+                        countdown: job.formData?.delay || job.formData?.bulkDelay || 1 
+                    } 
+                };
+            };
+
+            if (jobType === 'ticket') setJobs(startUpdater);
+            else if (jobType === 'invoice') setInvoiceJobs(startUpdater);
+            else if (jobType === 'catalyst') setCatalystJobs(startUpdater);
+            else if (jobType === 'email') setEmailJobs(startUpdater);
+            else if (jobType === 'qntrl') setQntrlJobs(startUpdater);
+            else if (jobType === 'people') setPeopleJobs(startUpdater);
+            else if (jobType === 'creator') setCreatorJobs(startUpdater);
+            else if (jobType === 'projects') setProjectsJobs(startUpdater);
+            else if (jobType === 'webinar') setWebinarJobs(startUpdater);
+            else if (jobType === 'fsm-contact') setFsmContactJobs(startUpdater);
+            else if (jobType === 'bookings') setBookingJobs(startUpdater);
+        });
+
+        // 🚨 SMART RECOVERY: THIS FIXES THE "TAB SLEEPING" BUG
         socket.on('databaseSync', (dbJobs: any[]) => {
             const nextJobs: any = {}; const nextInvoice: any = {}; const nextCatalyst: any = {};
             const nextEmail: any = {}; const nextQntrl: any = {}; const nextPeople: any = {};
             const nextCreator: any = {}; const nextProjects: any = {}; const nextWebinar: any = {};
             const nextFsm: any = {}; const nextBooking: any = {};
 
+            // WIPE OUT ghost tickets hiding in the bucket since the DB has the real total
+            resultBuckets.current = {
+                ticket: {}, invoice: {}, catalyst: {}, email: {}, qntrl: {}, people: {}, 
+                creator: {}, projects: {}, webinar: {}, fsmContact: {}, bookings: {}
+            };
+
             dbJobs.forEach(dbJob => {
                 const pName = dbJob.profileName;
                 const type = dbJob.jobType;
+                
+                const exactProcessingTime = dbJob.processingTime || 0;
+
+                const safeResults = (dbJob.results || []).map((r: any) => ({
+                    ...r,
+                    timestamp: r.timestamp ? new Date(r.timestamp) : new Date()
+                }));
+
+                const totalTarget = dbJob.totalToProcess || 0;
+                
+                // Smart Fallback: If you have all results, force the lock even if the DB got stuck
+                const isActuallyDone = safeResults.length >= totalTarget && totalTarget > 0;
+                const finalIsComplete = dbJob.status === 'complete' || dbJob.status === 'ended' || isActuallyDone;
+                const finalIsProcessing = dbJob.status === 'running' && !isActuallyDone;
+
+                // Auto-repair the backend database if it glitched
+                if (dbJob.status === 'running' && isActuallyDone) {
+                    socket.emit('markJobComplete', { profileName: pName, jobType: type });
+                }
+
                 const stateObj = {
                     formData: dbJob.formData || {},
-                    results: dbJob.results || [],
-                    isProcessing: dbJob.status === 'running',
+                    results: safeResults, 
+                    isProcessing: finalIsProcessing,
                     isPaused: dbJob.status === 'paused',
-                    isComplete: dbJob.status === 'complete' || dbJob.status === 'ended',
-                    processingStartTime: dbJob.status === 'running' ? new Date() : null,
-                    processingTime: 0,
-                    totalToProcess: dbJob.totalToProcess || 0,
-                    totalTicketsToProcess: dbJob.totalToProcess || 0,
+                    isComplete: finalIsComplete,
+                    processingStartTime: finalIsProcessing ? new Date() : null,
+                    processingTime: exactProcessingTime, 
+                    totalToProcess: totalTarget,
+                    totalTicketsToProcess: totalTarget,
                     countdown: 0,
                     currentDelay: dbJob.formData?.delay || dbJob.formData?.bulkDelay || 1,
                     filterText: ''
@@ -627,17 +699,22 @@ const MainApp = () => {
             setBookingJobs(prev => ({ ...prev, ...nextBooking }));
         });
 
-        // 🚨 CLEAR JOB EVENTS
         socket.on('jobCleared', ({ profileName, jobType }) => {
-            const clearProfile = (prev: any) => { const next = { ...prev }; delete next[profileName]; return next; };
-            if (jobType === 'ticket') setJobs(clearProfile);
-            else if (jobType === 'projects') setProjectsJobs(clearProfile);
-            // Can add others if needed later
+            if (jobType === 'ticket') setJobs(prev => ({ ...prev, [profileName]: createInitialJobState() }));
+            else if (jobType === 'projects') setProjectsJobs(prev => ({ ...prev, [profileName]: createInitialProjectsJobState() }));
         });
 
         socket.on('allJobsCleared', ({ jobType }) => {
-            if (jobType === 'ticket') setJobs({});
-            else if (jobType === 'projects') setProjectsJobs({});
+            if (jobType === 'ticket') setJobs(prev => {
+                const next = { ...prev };
+                Object.keys(next).forEach(k => next[k] = createInitialJobState());
+                return next;
+            });
+            else if (jobType === 'projects') setProjectsJobs(prev => {
+                const next = { ...prev };
+                Object.keys(next).forEach(k => next[k] = createInitialProjectsJobState());
+                return next;
+            });
         });
         
         socket.on('ticketResult', (result: any) => {
@@ -648,7 +725,6 @@ const MainApp = () => {
             if (!resultBuckets.current.projects[result.profileName]) resultBuckets.current.projects[result.profileName] = [];
             resultBuckets.current.projects[result.profileName].push({ ...result, timestamp: new Date() });
         });
-        // [Other bucket events remain the same - abbreviated for simplicity]
         socket.on('invoiceResult', (result: any) => { if (!resultBuckets.current.invoice[result.profileName]) resultBuckets.current.invoice[result.profileName] = []; resultBuckets.current.invoice[result.profileName].push(result); });
         socket.on('catalystResult', (result: any) => { if (!resultBuckets.current.catalyst[result.profileName]) resultBuckets.current.catalyst[result.profileName] = []; resultBuckets.current.catalyst[result.profileName].push(result); });
         socket.on('emailResult', (result: any) => { if (!resultBuckets.current.email[result.profileName]) resultBuckets.current.email[result.profileName] = []; resultBuckets.current.email[result.profileName].push(result); });
@@ -660,7 +736,7 @@ const MainApp = () => {
         socket.on('bookingResult', (result: any) => { if (!resultBuckets.current.bookings[result.profileName]) resultBuckets.current.bookings[result.profileName] = []; resultBuckets.current.bookings[result.profileName].push({ ...result, timestamp: new Date() }); });
 
         const flushInterval = setInterval(() => {
-            const flushJobs = (bucketObj: any, setFunc: any, initialBuilder: any, reverseOrder = false) => {
+            const flushJobs = (bucketObj: any, setFunc: any, initialBuilder: any, jobType: string, reverseOrder = false) => {
                 let hasDataToFlush = false;
                 for (const profile in bucketObj) { if (bucketObj[profile].length > 0) hasDataToFlush = true; }
 
@@ -684,22 +760,21 @@ const MainApp = () => {
                                 const isLast = updatedResults.length >= totalTarget && totalTarget > 0;
                                 const defaultDelay = profileJob.formData?.delay || profileJob.formData?.bulkDelay || 1;
 
-                                let actualCountdown = defaultDelay;
-                                if (profileJob.processingStartTime && !isLast) {
-                                    const startTimeMs = new Date(profileJob.processingStartTime).getTime();
-                                    const nextTicketIndex = updatedResults.length;
-                                    const scheduledTimeMs = startTimeMs + (nextTicketIndex * defaultDelay * 1000);
-                                    const remainingMs = scheduledTimeMs - Date.now();
-                                    actualCountdown = Math.ceil(Math.max(0, remainingMs / 1000));
-                                } else if (isLast) {
-                                    actualCountdown = 0;
-                                }
+                                const justFinished = isLast && profileJob.isProcessing;
 
                                 nextJobs[profile] = {
                                     ...profileJob,
                                     results: updatedResults,
-                                    countdown: actualCountdown,
+                                    isProcessing: isLast ? false : profileJob.isProcessing,
+                                    isComplete: isLast ? true : profileJob.isComplete,
+                                    countdown: isLast ? 0 : defaultDelay
                                 };
+
+                                if (justFinished) {
+                                    socketRef.current?.emit('markJobComplete', { profileName: profile, jobType });
+                                    setTimeout(() => toast({ title: `Processing Complete for ${profile}`, description: "All items have been processed." }), 500);
+                                }
+
                                 bucketObj[profile] = []; 
                             }
                         }
@@ -708,19 +783,19 @@ const MainApp = () => {
                 }
             };
 
-            flushJobs(resultBuckets.current.ticket, setJobs, createInitialJobState);
-            flushJobs(resultBuckets.current.invoice, setInvoiceJobs, createInitialInvoiceJobState);
-            flushJobs(resultBuckets.current.catalyst, setCatalystJobs, createInitialCatalystJobState);
-            flushJobs(resultBuckets.current.email, setEmailJobs, createInitialEmailJobState);
-            flushJobs(resultBuckets.current.qntrl, setQntrlJobs, createInitialQntrlJobState);
-            flushJobs(resultBuckets.current.people, setPeopleJobs, createInitialPeopleJobState);
-            flushJobs(resultBuckets.current.creator, setCreatorJobs, createInitialCreatorJobState);
-            flushJobs(resultBuckets.current.projects, setProjectsJobs, createInitialProjectsJobState);
-            flushJobs(resultBuckets.current.webinar, setWebinarJobs, createInitialWebinarJobState, true);
-            flushJobs(resultBuckets.current.fsmContact, setFsmContactJobs, createInitialFsmContactJobState);
-            flushJobs(resultBuckets.current.bookings, setBookingJobs, createInitialBookingJobState);
+            flushJobs(resultBuckets.current.ticket, setJobs, createInitialJobState, 'ticket');
+            flushJobs(resultBuckets.current.invoice, setInvoiceJobs, createInitialInvoiceJobState, 'invoice');
+            flushJobs(resultBuckets.current.catalyst, setCatalystJobs, createInitialCatalystJobState, 'catalyst');
+            flushJobs(resultBuckets.current.email, setEmailJobs, createInitialEmailJobState, 'email');
+            flushJobs(resultBuckets.current.qntrl, setQntrlJobs, createInitialQntrlJobState, 'qntrl');
+            flushJobs(resultBuckets.current.people, setPeopleJobs, createInitialPeopleJobState, 'people');
+            flushJobs(resultBuckets.current.creator, setCreatorJobs, createInitialCreatorJobState, 'creator');
+            flushJobs(resultBuckets.current.projects, setProjectsJobs, createInitialProjectsJobState, 'projects');
+            flushJobs(resultBuckets.current.webinar, setWebinarJobs, createInitialWebinarJobState, 'webinar', true);
+            flushJobs(resultBuckets.current.fsmContact, setFsmContactJobs, createInitialFsmContactJobState, 'fsm-contact');
+            flushJobs(resultBuckets.current.bookings, setBookingJobs, createInitialBookingJobState, 'bookings');
 
-        }, 1000); 
+        }, 1000);
 
         socket.on('ticketUpdate', (updateData) => {
           setJobs(prevJobs => {
@@ -763,23 +838,6 @@ const MainApp = () => {
 
         const handleJobCompletion = (data: any, title: string, description: string, variant?: "destructive") => {
             const { profileName, jobType } = data;
-            const getInitialState = (type: string) => {
-                switch(type) {
-                    case 'ticket': return createInitialJobState();
-                    case 'invoice': return createInitialInvoiceJobState();
-                    case 'catalyst': return createInitialCatalystJobState();
-                    case 'email': return createInitialEmailJobState();
-                    case 'qntrl': return createInitialQntrlJobState();
-                    case 'people': return createInitialPeopleJobState();
-                    case 'creator': return createInitialCreatorJobState();
-                    case 'projects': return createInitialProjectsJobState();
-                    case 'webinar': return createInitialWebinarJobState();
-                    case 'fsm-contact': return createInitialFsmContactJobState();
-                    case 'bookings': return createInitialBookingJobState();
-                    default: return {} as any;
-                }
-            };
-
             const updater = (prev: any) => {
                 const profileJob = prev[profileName] || getInitialState(jobType);
                 return { ...prev, [profileName]: { ...profileJob, isProcessing: false, isPaused: false, isComplete: true, countdown: 0 } };

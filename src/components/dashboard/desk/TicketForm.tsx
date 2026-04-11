@@ -12,7 +12,7 @@ import {
     Send, Eye, Mail, Clock, MessageSquare, Users, Pause, Play, Square, 
     Bot, Upload, RefreshCw, Trash2, MailWarning, CheckCircle2, 
     XCircle, ImagePlus, AlertTriangle, RotateCcw, Sparkles, Edit, 
-    BarChart3, CopyCheck, Radar 
+    BarChart3, CopyCheck 
 } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/hooks/use-toast';
@@ -24,7 +24,7 @@ import { Separator } from '@/components/ui/separator';
 import { TrackingAnalytics } from './TrackingAnalytics';
 
 export interface TicketFormData {
-  emails: string;
+  emails: string | string[]; 
   subject: string;
   description: string;
   delay: number;
@@ -51,7 +51,7 @@ interface TicketFormProps {
   jobState: JobState | null;
   onRetryFailed: () => void;
   failedCount: number;
-  onApplyAllClick: () => void; // <--- NEW PROP
+  onApplyAllClick: () => void;
 }
 
 const ImageToolDialog = ({ onApply }: { onApply: (html: string) => void }) => {
@@ -87,15 +87,32 @@ export const TicketForm: React.FC<TicketFormProps> = ({
   const [isLoadingName, setIsLoadingName] = useState(false);
   const [isAnalyticsOpen, setIsAnalyticsOpen] = useState(false); 
   
+  // 🚨 SAFETY NET 1: If data is suddenly cleared by wiping history, wait for refresh
+  if (!formData) {
+      return (
+          <div className="flex justify-center items-center p-12 text-muted-foreground animate-pulse border border-dashed rounded-lg bg-muted/20">
+              Refreshing workspace...
+          </div>
+      );
+  }
+
   useEffect(() => {
-    if (!formData.stopAfterFailures && formData.stopAfterFailures !== 0) {
+    if (formData && formData.stopAfterFailures === undefined) {
         onFormDataChange({ ...formData, stopAfterFailures: 4 });
     }
   }, []);
 
+  // 🚨 SAFETY NET 2: Bulletproof email parsing
+  const currentEmailsStr = useMemo(() => {
+    if (!formData) return '';
+    if (typeof formData.emails === 'string') return formData.emails;
+    if (Array.isArray(formData.emails)) return formData.emails.join('\n');
+    return '';
+  }, [formData]);
+
   const handleCleanEmails = () => {
-      if (!formData.emails) return;
-      const raw = formData.emails;
+      if (!currentEmailsStr) return;
+      const raw = currentEmailsStr;
       const split = raw.split(/[\n,;]+/);
       const validEmails = new Set<string>();
       const emailRegex = /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+)/;
@@ -148,7 +165,10 @@ export const TicketForm: React.FC<TicketFormProps> = ({
       }
   };
 
-  const emailCount = useMemo(() => formData.emails.split('\n').filter(email => email.trim() !== '').length, [formData.emails]);
+  const emailCount = useMemo(() => {
+      return currentEmailsStr.split('\n').filter(email => email.trim() !== '').length;
+  }, [currentEmailsStr]);
+
   const handleSubmit = (e: React.FormEvent) => { e.preventDefault(); onSubmit(); };
   
   const handleInputChange = (field: keyof Omit<TicketFormData, 'sendDirectReply' | 'verifyEmail' | 'enableTracking'>, value: string | number) => { 
@@ -177,10 +197,14 @@ export const TicketForm: React.FC<TicketFormProps> = ({
     }
   };
 
-  const handleApplyImage = (html: string) => { onFormDataChange({ ...formData, description: formData.description + '\n' + html }); };
+  const handleApplyImage = (html: string) => { 
+      const currentDesc = typeof formData.description === 'string' ? formData.description : '';
+      onFormDataChange({ ...formData, description: currentDesc + '\n' + html }); 
+  };
 
-  const successCount = jobState?.results.filter(r => r.success).length || 0;
-  const errorCount = jobState?.results.filter(r => !r.success).length || 0;
+  // 🚨 SAFETY NET 3: Safely count results even if jobState is cleared out
+  const successCount = (jobState?.results || []).filter(r => r.success).length;
+  const errorCount = (jobState?.results || []).filter(r => !r.success).length;
 
   return (
     <>
@@ -242,7 +266,7 @@ export const TicketForm: React.FC<TicketFormProps> = ({
                           size="sm" 
                           className="h-7 text-xs text-blue-600 hover:text-blue-800 hover:bg-blue-50"
                           onClick={handleCleanEmails}
-                          disabled={isProcessing || !formData.emails}
+                          disabled={isProcessing || !currentEmailsStr}
                           title="Remove duplicates and fix formatting"
                       >
                           <Sparkles className="h-3 w-3 mr-1" />
@@ -259,23 +283,24 @@ export const TicketForm: React.FC<TicketFormProps> = ({
                       </Badge>
                     </div>
                   </div>
+                  
                   <Textarea
                     id="emails"
                     placeholder="user1@example.com&#10;user2@example.com"
-                    value={formData.emails}
+                    value={currentEmailsStr}
                     onChange={(e) => handleInputChange('emails', e.target.value)}
                     className="min-h-[200px] font-mono text-sm bg-muted/30 border-border focus:bg-card transition-colors"
                     required
                     disabled={isProcessing}
                   />
                   
-                  {jobState && (jobState.isProcessing || jobState.results.length > 0) && (
+                  {jobState && (jobState.isProcessing || (jobState.results && jobState.results.length > 0)) && (
                       <div className="pt-4 border-t border-dashed">
                           <div className="grid grid-cols-4 gap-4 text-center">
-                              <div><Label className="text-xs text-muted-foreground">Time Elapsed</Label><p className="text-lg font-bold font-mono">{formatTime(jobState.processingTime)}</p></div>
+                              <div><Label className="text-xs text-muted-foreground">Time Elapsed</Label><p className="text-lg font-bold font-mono">{formatTime(jobState.processingTime || 0)}</p></div>
                               <div><Label className="text-xs text-muted-foreground">Success</Label><p className="text-lg font-bold font-mono text-success flex items-center justify-center space-x-1"><CheckCircle2 className="h-4 w-4" /><span>{successCount}</span></p></div>
                               <div><Label className="text-xs text-muted-foreground">Failed</Label><p className="text-lg font-bold font-mono text-destructive flex items-center justify-center space-x-1"><XCircle className="h-4 w-4" /><span>{errorCount}</span></p></div>
-                              <div><Label className="text-xs text-muted-foreground">Remaining</Label><p className="text-lg font-bold font-mono text-muted-foreground flex items-center justify-center space-x-1"><Clock className="h-4 w-4" /><span>{(jobState.totalTicketsToProcess || 0) - (jobState.results.length || 0)}</span></p></div>
+                              <div><Label className="text-xs text-muted-foreground">Remaining</Label><p className="text-lg font-bold font-mono text-muted-foreground flex items-center justify-center space-x-1"><Clock className="h-4 w-4" /><span>{(jobState.totalTicketsToProcess || 0) - ((jobState.results && jobState.results.length) || 0)}</span></p></div>
                           </div>
                       </div>
                   )}
@@ -286,13 +311,13 @@ export const TicketForm: React.FC<TicketFormProps> = ({
                         <div className="space-y-2">
                           <Label htmlFor="delay" className="flex items-center space-x-2"><Clock className="h-4 w-4" /><span>Delay (Sec)</span></Label>
                           <div className="flex items-center space-x-3">
-                            <Input id="delay" type="number" min="0" step="1" value={formData.delay} onChange={(e) => handleInputChange('delay', parseInt(e.target.value) || 0)} className="bg-muted/30 border-border focus:bg-card" required disabled={isProcessing} />
+                            <Input id="delay" type="number" min="0" step="1" value={formData.delay || 0} onChange={(e) => handleInputChange('delay', parseInt(e.target.value) || 0)} className="bg-muted/30 border-border focus:bg-card" required disabled={isProcessing} />
                           </div>
                         </div>
                         <div className="space-y-2">
                           <Label htmlFor="stopAfterFailures" className="flex items-center space-x-2"><AlertTriangle className="h-4 w-4 text-amber-500" /><span>Auto-Pause</span></Label>
                           <div className="flex items-center space-x-3">
-                            <Input id="stopAfterFailures" type="number" min="0" step="1" placeholder="0 (Disabled)" value={formData.stopAfterFailures} onChange={(e) => handleInputChange('stopAfterFailures', e.target.value === '' ? 0 : parseInt(e.target.value))} className="bg-muted/30 border-border focus:bg-card" disabled={isProcessing} />
+                            <Input id="stopAfterFailures" type="number" min="0" step="1" placeholder="0 (Disabled)" value={formData.stopAfterFailures ?? ''} onChange={(e) => handleInputChange('stopAfterFailures', e.target.value === '' ? 0 : parseInt(e.target.value))} className="bg-muted/30 border-border focus:bg-card" disabled={isProcessing} />
                           </div>
                         </div>
                     </div>
@@ -304,7 +329,7 @@ export const TicketForm: React.FC<TicketFormProps> = ({
                           <div className="flex items-start space-x-3">
                               <Checkbox 
                                   id="sendDirectReply" 
-                                  checked={formData.sendDirectReply} 
+                                  checked={!!formData.sendDirectReply} 
                                   onCheckedChange={(checked) => handleCheckboxChange('sendDirectReply', !!checked)} 
                                   disabled={isProcessing} 
                               />
@@ -317,7 +342,7 @@ export const TicketForm: React.FC<TicketFormProps> = ({
                           <div className="flex items-start space-x-3">
                               <Checkbox 
                                   id="verifyEmail" 
-                                  checked={formData.verifyEmail} 
+                                  checked={!!formData.verifyEmail} 
                                   onCheckedChange={(checked) => handleCheckboxChange('verifyEmail', !!checked)} 
                                   disabled={isProcessing} 
                               />
@@ -332,7 +357,7 @@ export const TicketForm: React.FC<TicketFormProps> = ({
                           <div className="flex items-start space-x-3">
                               <Checkbox 
                                   id="enableTracking" 
-                                  checked={formData.enableTracking} 
+                                  checked={!!formData.enableTracking} 
                                   onCheckedChange={(checked) => handleCheckboxChange('enableTracking', !!checked)} 
                                   disabled={isProcessing || !selectedProfile?.desk?.cloudflareTrackingUrl} 
                               />
@@ -356,7 +381,7 @@ export const TicketForm: React.FC<TicketFormProps> = ({
                       <Edit className="h-4 w-4" /><span>Sender Name (Native Zoho)</span>
                   </Label>
                   <div className="flex items-center space-x-2">
-                      <Input id="displayName" value={formData.displayName} onChange={(e) => handleInputChange('displayName', e.target.value)} placeholder={isLoadingName ? "Loading..." : "Not configured"} disabled={!selectedProfile?.desk?.mailReplyAddressId || isLoadingName} />
+                      <Input id="displayName" value={formData.displayName || ''} onChange={(e) => handleInputChange('displayName', e.target.value)} placeholder={isLoadingName ? "Loading..." : "Not configured"} disabled={!selectedProfile?.desk?.mailReplyAddressId || isLoadingName} />
                       <Button type="button" size="sm" onClick={handleUpdateName} disabled={!selectedProfile?.desk?.mailReplyAddressId || isLoadingName || formData.displayName === 'N/A'}>Update</Button>
                       <Button type="button" size="icon" variant="ghost" onClick={fetchDisplayName} disabled={!selectedProfile?.desk?.mailReplyAddressId || isLoadingName}>
                           <RefreshCw className={`h-4 w-4 ${isLoadingName ? 'animate-spin' : ''}`} />
@@ -374,7 +399,7 @@ export const TicketForm: React.FC<TicketFormProps> = ({
 
                 <div className="space-y-2 mt-4">
                   <Label htmlFor="subject" className="flex items-center space-x-2"><MessageSquare className="h-4 w-4" /><span>Ticket Subject</span></Label>
-                  <Input id="subject" placeholder="Enter ticket subject..." value={formData.subject} onChange={(e) => handleInputChange('subject', e.target.value)} className="h-12 bg-muted/30 border-border focus:bg-card transition-colors" required disabled={isProcessing} />
+                  <Input id="subject" placeholder="Enter ticket subject..." value={typeof formData.subject === 'string' ? formData.subject : ''} onChange={(e) => handleInputChange('subject', e.target.value)} className="h-12 bg-muted/30 border-border focus:bg-card transition-colors" required disabled={isProcessing} />
                 </div>
 
                 <div className="space-y-2">
@@ -384,14 +409,14 @@ export const TicketForm: React.FC<TicketFormProps> = ({
                       <ImageToolDialog onApply={handleApplyImage} />
                       <Dialog>
                         <DialogTrigger asChild><Button variant="ghost" size="sm" className="h-7 px-2 text-xs"><Eye className="h-3 w-3 mr-1" />Preview</Button></DialogTrigger>
-                        <DialogContent className="max-w-2xl bg-card border-border shadow-large"><DialogHeader><DialogTitle>Description Preview</DialogTitle></DialogHeader><div className="p-4 bg-muted/30 rounded-lg border border-border max-h-96 overflow-y-auto" dangerouslySetInnerHTML={{ __html: formData.description }} /></DialogContent>
+                        <DialogContent className="max-w-2xl bg-card border-border shadow-large"><DialogHeader><DialogTitle>Description Preview</DialogTitle></DialogHeader><div className="p-4 bg-muted/30 rounded-lg border border-border max-h-96 overflow-y-auto" dangerouslySetInnerHTML={{ __html: typeof formData.description === 'string' ? formData.description : '' }} /></DialogContent>
                       </Dialog>
                     </div>
                   </div>
                   <Textarea 
                     id="description" 
                     placeholder="Enter ticket description (HTML supported)..." 
-                    value={formData.description} 
+                    value={typeof formData.description === 'string' ? formData.description : ''} 
                     onChange={(e) => handleInputChange('description', e.target.value)} 
                     className="min-h-[245px] bg-muted/30 border-border focus:bg-card transition-colors" 
                     required 
@@ -404,7 +429,17 @@ export const TicketForm: React.FC<TicketFormProps> = ({
             <div className="pt-4 border-t border-border">
               {!isProcessing ? (
                 <div className="flex gap-3">
-                  <Button type="submit" variant="premium" size="lg" disabled={!formData.emails.trim() || !formData.subject.trim() || !formData.description.trim()} className="flex-1">
+                  <Button 
+                    type="submit" 
+                    variant="premium" 
+                    size="lg" 
+                    disabled={
+                      !currentEmailsStr.trim() || 
+                      !(typeof formData.subject === 'string' ? formData.subject : '').trim() || 
+                      !(typeof formData.description === 'string' ? formData.description : '').trim()
+                    } 
+                    className="flex-1"
+                  >
                       <Send className="h-4 w-4 mr-2" />
                       Create {emailCount} Tickets
                   </Button>
@@ -426,7 +461,6 @@ export const TicketForm: React.FC<TicketFormProps> = ({
                 </div>
               )}
 
-              {/* 🚨 NEW DATABASE CLEAR BUTTONS FOR DESK */}
               <div className="flex justify-end space-x-2 mt-4">
                   <Button 
                       type="button"
