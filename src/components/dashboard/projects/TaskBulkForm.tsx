@@ -132,9 +132,9 @@ const ImageToolDialog = ({ onApply }: { onApply: (html: string) => void }) => {
     return (
         <Dialog open={isOpen} onOpenChange={setIsOpen}>
             <DialogTrigger asChild>
-                <Button variant="ghost" size="sm" className="h-7 px-2 text-xs">
+                <Button variant="ghost" size="sm" className="h-7 px-2 text-xs border border-dashed border-slate-300">
                     <ImagePlus className="h-3 w-3 mr-1" />
-                    Add Image
+                    Insert Image
                 </Button>
             </DialogTrigger>
             <DialogContent className="sm:max-w-[600px]">
@@ -378,132 +378,12 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
     }
   }, [allFields, jobState.formData.primaryField, handleFormDataChange]); 
 
-  const generatePayloadBulkData = useCallback(() => {
-      let finalBulkData = { ...jobState.formData.bulkDefaultData };
-      const smartText = jobState.formData.smartSplitterText || '';
-      const accountIndex = profiles.findIndex(p => p.profileName === selectedProfileName) + 1;
-      const multilineFields = allFields.filter(f => f.column_type === 'multiline');
-
-      if (smartText.trim() !== '') {
-          if (multilineFields.length > 0) {
-              const maxCharsPerField = 800;
-              let remainingText = smartText;
-              
-              for (const field of multilineFields) {
-                  if (remainingText.length === 0) break;
-                  
-                  let cutIndex = remainingText.length;
-                  if (remainingText.length > maxCharsPerField) {
-                      cutIndex = remainingText.lastIndexOf('\n', maxCharsPerField);
-                      if (cutIndex === -1 || cutIndex < maxCharsPerField * 0.5) {
-                          cutIndex = remainingText.lastIndexOf(' ', maxCharsPerField);
-                      }
-                      if (cutIndex === -1 || cutIndex < maxCharsPerField * 0.5) {
-                          cutIndex = maxCharsPerField;
-                      }
-                  }
-                  
-                  let chunk = remainingText.substring(0, cutIndex).trim();
-
-                  if (appendAccountNumber && selectedProfileName) {
-                      const prefix = `${selectedProfileName}<br><br>`;
-                      if (!chunk.startsWith(prefix)) {
-                          chunk = `${prefix}${chunk}<br><br><br>account number ${accountIndex}`;
-                      }
-                  }
-
-                  finalBulkData[field.column_name] = chunk;
-                  remainingText = remainingText.substring(cutIndex).trim();
-              }
-          }
-      } else {
-          if (appendAccountNumber && selectedProfileName) {
-              multilineFields.forEach(field => {
-                  const key = field.column_name;
-                  if (finalBulkData[key] && typeof finalBulkData[key] === 'string') {
-                      const prefix = `${selectedProfileName}<br><br>`;
-                      if (!finalBulkData[key].startsWith(prefix)) {
-                          finalBulkData[key] = `${prefix}${finalBulkData[key]}<br><br><br>account number ${accountIndex}`;
-                      }
-                  }
-              });
-          }
-      }
-      
-      return finalBulkData;
-  }, [jobState.formData, allFields, appendAccountNumber, profiles, selectedProfileName]);
-
-  useEffect(() => {
-      if (!socket || !selectedProfileName) return;
-      
-      const onRecovery = (data: { profileName: string, jobType: string }) => {
-          if (data.profileName === selectedProfileName && data.jobType === 'projects') {
-              
-              const allTasks = jobState.formData.primaryValues.split('\n').map(name => name.trim()).filter(name => name.length > 0);
-              const processedCount = results.length;
-              const remainingTasks = allTasks.slice(processedCount);
-
-              if (remainingTasks.length === 0) {
-                  toast({ title: 'Job Already Complete', description: 'No tasks remaining.' });
-                  setJobs((prev: any) => ({ ...prev, [selectedProfileName]: { ...prev[selectedProfileName], isPaused: false, isProcessing: false, isComplete: true }}));
-                  return;
-              }
-
-              const payloadBulkData = generatePayloadBulkData();
-
-              const payloadFormData = {
-                  ...jobState.formData,
-                  primaryValues: remainingTasks.join('\n'), 
-                  tasklistId: autoTaskListId,
-                  displayName: currentProjectName,
-                  stopAfterFailures: stopAfterFailures,
-                  enableTracking: enableTracking,
-                  appendAccountNumber: appendAccountNumber,
-                  bulkDefaultData: payloadBulkData 
-              };
-
-              const stateFormData = {
-                  ...jobState.formData,
-                  primaryValues: remainingTasks.join('\n'), 
-                  tasklistId: autoTaskListId,
-                  displayName: currentProjectName,
-                  stopAfterFailures: stopAfterFailures,
-                  enableTracking: enableTracking,
-                  appendAccountNumber: appendAccountNumber
-              };
-
-              setJobs((prev: any) => ({
-                  ...prev,
-                  [selectedProfileName]: { 
-                      ...prev[selectedProfileName], 
-                      formData: stateFormData, 
-                      isPaused: false, 
-                      isProcessing: true, 
-                      isComplete: false 
-                  },
-              }));
-
-              socket.emit('startBulkCreateTasks', {
-                  selectedProfileName,
-                  activeProfile: { projects: { portalId: projects.find(p => p.id === jobState.formData.projectId)?.portal_id } }, 
-                  formData: payloadFormData 
-              });
-
-              toast({ title: 'Session Recovered', description: `Resuming from task ${processedCount + 1}...` });
-          }
-      };
-      
-      socket.on('requestJobRecovery', onRecovery);
-      return () => { socket.off('requestJobRecovery', onRecovery); };
-  }, [socket, selectedProfileName, jobState.formData, results.length, autoTaskListId, stopAfterFailures, enableTracking, appendAccountNumber, projects, currentProjectName, generatePayloadBulkData]);
-
-  // 🚨 MASSIVE LOGS ADDED TO DEBUG "APPLY ALL"
   const handleApplyToAll = async (updates: any) => {
     setIsApplyingAll(true);
 
     if (updates.displayName !== undefined) {
         setCurrentProjectName(updates.displayName);
-        handleFormDataChange('displayName', updates.displayName); // Forces current active view to update
+        handleFormDataChange('displayName', updates.displayName); 
     }
 
     await new Promise(resolve => setTimeout(resolve, 800));
@@ -512,12 +392,10 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
       const next = { ...prev };
       
       profiles.forEach((profile) => {
-        const pName = profile.profileName; // This is the Account Name
+        const pName = profile.profileName; 
         
-        // Safety check: Does this profile exist in the main UI state?
         const existingJob = next[pName] || createInitialJobState();
         
-        // 1. Grab the text that is meant for the Smart Text Splitter
         let customSmartText = updates.smartSplitterText !== undefined 
             ? updates.smartSplitterText 
             : existingJob.formData.smartSplitterText;
@@ -526,11 +404,9 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
             ? updates.appendAccountNumber 
             : existingJob.formData.appendAccountNumber;
 
-        // 2. Inject the text FIRST, then 6 line breaks, then the Account Name
         if (shouldAppend && customSmartText && customSmartText.trim() !== '') {
             const suffix = `<br><br><br><br><br><br>${pName}`;
             
-            // Prevent double injection if you click Apply All multiple times
             if (!customSmartText.endsWith(suffix)) {
                 customSmartText = `${customSmartText}${suffix}`;
             }
@@ -541,7 +417,7 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
           formData: { 
             ...existingJob.formData, 
             ...updates,
-            smartSplitterText: customSmartText // Saves to the correct Smart Text Splitter field
+            smartSplitterText: customSmartText 
           }
         };
       });
@@ -557,21 +433,12 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
   const handleStart = () => {
     const { projectId, primaryValues, delay } = jobState.formData; 
 
-    if (!selectedProfileName || !projectId) {
+    if (!selectedProfileName) {
       return toast({
         title: 'Validation Error',
         description: 'Please select a profile and project.',
         variant: 'destructive',
       });
-    }
-
-    if (!autoTaskListId) {
-        return toast({
-            title: 'Missing Tasklist ID',
-            description: 'Could not find an active tasklist for this project. Please go to the "View Tasks" tab and click "Force Refresh" so the app can fetch a valid Tasklist ID from Zoho.',
-            variant: 'destructive',
-            duration: 7000
-        });
     }
 
     const tasksToProcess = primaryValues.split('\n').map(name => name.trim()).filter(name => name.length > 0);
@@ -588,32 +455,20 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
         return toast({ title: 'Connection Error', description: 'Socket not connected.', variant: 'destructive' });
     }
 
-    const payloadBulkData = generatePayloadBulkData();
-
     const payloadFormData: ProjectsFormData = {
       ...jobState.formData, 
-      tasklistId: autoTaskListId, 
+      tasklistId: autoTaskListId || jobState.formData.tasklistId, 
       displayName: currentProjectName, 
       stopAfterFailures: stopAfterFailures,
       enableTracking: enableTracking,
-      appendAccountNumber: appendAccountNumber,
-      bulkDefaultData: payloadBulkData 
-    };
-
-    const stateFormData: ProjectsFormData = {
-        ...jobState.formData, 
-        tasklistId: autoTaskListId, 
-        displayName: currentProjectName, 
-        stopAfterFailures: stopAfterFailures,
-        enableTracking: enableTracking,
-        appendAccountNumber: appendAccountNumber
+      appendAccountNumber: appendAccountNumber
     };
 
     setJobs((prevJobs: any) => ({
       ...prevJobs,
       [selectedProfileName]: {
         ...jobState,
-        formData: stateFormData, 
+        formData: payloadFormData, 
         totalToProcess: tasksToProcess.length,
         isProcessing: true,
         isPaused: false,
@@ -1015,7 +870,6 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
                                 value={jobState.formData.smartSplitterText || ''}
                                 onChange={(val) => handleFormDataChange('smartSplitterText', val)}
                                 fields={allFields
-                                    // 🚨 FIXED: Removed "visibleFields" filter so it sees ALL multiline fields
                                     .filter(f => f.column_name !== jobState.formData.primaryField)
                                     .map(f => ({
                                         api_name: f.column_name,
@@ -1023,7 +877,6 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
                                         data_type: f.column_type
                                     }))}
                                 onSplitValues={(newValues) => {
-                                    // 🚨 Optional: Automatically "unhide" the fields on your screen so you can see them
                                     setVisibleFields(prev => {
                                         const next = { ...prev };
                                         Object.keys(newValues).forEach(key => next[key] = true);
@@ -1174,34 +1027,69 @@ export const TaskBulkForm: React.FC<TaskBulkFormProps> = ({
             </div>
           )}
 
-          <div className="mt-4 flex space-x-2">
-            {!isProcessing && (
-              <Button 
-                onClick={handleStart} 
-                className="w-full bg-green-600 hover:bg-green-700" 
-                disabled={!selectedProfileName || projects.length === 0 || jobState.formData.primaryValues.trim().length === 0 || !autoTaskListId}
-              >
-                <Play className="mr-2 h-4 w-4" /> Start Bulk Creation
-              </Button>
-            )}
-            
-            {isProcessing && !isPaused && (
-              <Button onClick={handlePause} className="w-1/2" variant="outline">
-                <Pause className="mr-2 h-4 w-4" /> Pause
-              </Button>
-            )}
-            
-            {isProcessing && isPaused && (
-              <Button onClick={handleResume} className="w-1/2">
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Resume
-              </Button>
-            )}
-            
-            {isProcessing && (
-              <Button onClick={handleEnd} className="w-1/2" variant="destructive">
-                <Square className="mr-2 h-4 w-4" /> End Job
-              </Button>
-            )}
+          <div className="mt-4 flex flex-col space-y-3">
+            <div className="flex space-x-2">
+                {!isProcessing && (
+                  <Button 
+                    onClick={handleStart} 
+                    className="w-full bg-green-600 hover:bg-green-700" 
+                    disabled={!selectedProfileName || projects.length === 0 || jobState.formData.primaryValues.trim().length === 0 || (!autoTaskListId && !jobState.formData.tasklistId)}
+                  >
+                    <Play className="mr-2 h-4 w-4" /> Start Bulk Creation
+                  </Button>
+                )}
+                
+                {isProcessing && !isPaused && (
+                  <Button onClick={handlePause} className="w-1/2" variant="outline">
+                    <Pause className="mr-2 h-4 w-4" /> Pause
+                  </Button>
+                )}
+                
+                {isProcessing && isPaused && (
+                  <Button onClick={handleResume} className="w-1/2">
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Resume
+                  </Button>
+                )}
+                
+                {isProcessing && (
+                  <Button onClick={handleEnd} className="w-1/2" variant="destructive">
+                    <Square className="mr-2 h-4 w-4" /> End Job
+                  </Button>
+                )}
+            </div>
+
+            {/* 🚨 NEW DATABASE CLEAR BUTTONS FOR PROJECTS */}
+            <div className="flex justify-end space-x-2 pt-2">
+                <Button 
+                    type="button"
+                    variant="outline" 
+                    size="sm"
+                    className="border-red-200 text-red-600 hover:bg-red-50 text-xs h-8"
+                    onClick={() => {
+                        if(window.confirm("Clear this account's job history from the database?")) {
+                            socket?.emit('clearJob', { profileName: selectedProfileName, jobType: 'projects' });
+                        }
+                    }}
+                    disabled={isProcessing || !selectedProfileName}
+                >
+                    <Trash2 className="w-3 h-3 mr-1" /> Clear This Account
+                </Button>
+
+                <Button 
+                    type="button"
+                    variant="ghost" 
+                    size="sm"
+                    className="text-xs text-red-500 hover:text-red-700 h-8"
+                    onClick={() => {
+                        if(window.confirm("DANGER: This will delete ALL Projects job history for ALL accounts!")) {
+                            socket?.emit('clearAllJobs', { jobType: 'projects' });
+                        }
+                    }}
+                    disabled={isProcessing}
+                >
+                    Wipe All History
+                </Button>
+            </div>
           </div>
         </div>
 

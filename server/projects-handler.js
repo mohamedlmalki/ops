@@ -3,6 +3,7 @@
 const { getValidAccessToken, makeApiCall, parseError, createJobId, readProfiles } = require('./utils');
 const { delay } = require('./utils'); 
 const axios = require('axios'); 
+const db = require('./database'); // 🚨 IMPORT DATABASE
 
 let activeJobs = {};
 
@@ -13,18 +14,11 @@ const getRealProjectsProfile = (profiles, profileName) => {
 };
 
 function injectProjectsTracking(dataForThisTask, taskDescription, email, selectedProfileName, projectsConfig, enableTracking) {
-    console.log(`\n========== [DEBUG: PROJECTS TRACKING] ==========`);
-    console.log(`[dev:server] 🔍 STARTING TRACKING INJECTOR FOR: ${email}`);
-
-    if (!enableTracking) {
-        console.log(`[dev:server] ⚠️ Tracking Checkbox is OFF. Sending normal task.`);
-        return { updatedDataForThisTask: dataForThisTask, updatedTaskDescription: taskDescription };
-    }
+    if (!enableTracking) return { updatedDataForThisTask: dataForThisTask, updatedTaskDescription: taskDescription };
 
     let updatedDataForThisTask = { ...dataForThisTask };
     let updatedTaskDescription = typeof taskDescription === 'string' ? taskDescription : '';
 
-    // 1. MAKE THE REAL HTML PIXEL (Using opacity:0.01 so Zoho doesn't delete it)
     let pixelHtml = "";
     let pixelInjected = false;
     if (projectsConfig && projectsConfig.cloudflareTrackingUrl) {
@@ -32,7 +26,6 @@ function injectProjectsTracking(dataForThisTask, taskDescription, email, selecte
         pixelHtml = `<img src="${baseUrl}/track.gif?email=${encodeURIComponent(email)}&ticketId=Projects&profile=${encodeURIComponent(selectedProfileName + '_Projects')}" width="1" height="1" alt="" style="opacity:0.01;" />`;
     }
 
-    // 2. PROCESS CUSTOM FIELDS FOR URL CLICKS (GPS MAPPING)
     let customFieldKeys = Object.keys(updatedDataForThisTask).filter(k => typeof updatedDataForThisTask[k] === 'string');
     customFieldKeys.sort((a, b) => a.localeCompare(b, undefined, {numeric: true, sensitivity: 'base'}));
 
@@ -73,7 +66,6 @@ function injectProjectsTracking(dataForThisTask, taskDescription, email, selecte
         }
     }
 
-    // Apply URL injections safely
     for (let key of customFieldKeys) {
         let insertions = insertionsByField[key];
         if (insertions.length > 0) {
@@ -86,22 +78,18 @@ function injectProjectsTracking(dataForThisTask, taskDescription, email, selecte
         }
     }
 
-    // 3. THE FIX: PUT THE HTML PIXEL BACK IN THE CUSTOM FIELDS (At the very end of your letter)
     if (pixelHtml) {
-        // We read your custom fields backward (e.g. 7_ then 6_ then 5_) to ensure the pixel is at the bottom of the email.
         let reversedKeys = [...customFieldKeys].reverse();
         for (let key of reversedKeys) {
             let text = updatedDataForThisTask[key] || "";
-            if (text.length + pixelHtml.length <= 1000) { // Safety check for Zoho's 1K limit
+            if (text.length + pixelHtml.length <= 1000) { 
                 updatedDataForThisTask[key] = text + pixelHtml;
                 pixelInjected = true;
-                console.log(`[dev:server] 🖼️ Injected Open Pixel image into Custom Field [${key}]!`);
-                break; // Stop looking once we successfully inject it
+                break; 
             }
         }
     }
 
-    // 4. PROCESS TASK DESCRIPTION (For any regular links in the description)
     const descMatches = updatedTaskDescription.match(urlRegex) || [];
     if (descMatches.length > 0) {
         updatedTaskDescription = updatedTaskDescription.replace(urlRegex, (rawUrl) => {
@@ -113,17 +101,14 @@ function injectProjectsTracking(dataForThisTask, taskDescription, email, selecte
         });
     }
 
-    // 5. PIXEL FALLBACK (Only triggers if EVERY custom field is completely 1000/1000 full)
     if (pixelHtml && !pixelInjected) {
         updatedTaskDescription += pixelHtml;
-        console.log(`[dev:server] 🖼️ Injected Open Pixel into Description (Fallback).`);
     }
 
-    console.log(`[dev:server] 🏁 PROJECTS INJECTOR COMPLETE.`);
     return { updatedDataForThisTask, updatedTaskDescription };
 }
 
-async function getApiNameMap(portalId, projectId, activeProfile) {
+async function getApiNameMapAndMultiline(portalId, projectId, activeProfile) {
     try {
         const { access_token } = await getValidAccessToken(activeProfile, 'projects');
         const domain = 'https://projectsapi.zoho.com';
@@ -140,18 +125,22 @@ async function getApiNameMap(portalId, projectId, activeProfile) {
         }
 
         const apiNameMap = {};
+        const multilineFields = [];
         if (layout.section_details) {
             for (const section of layout.section_details) {
                 if (section.customfield_details) {
                     for (const field of section.customfield_details) {
                         apiNameMap[field.column_name] = field.api_name;
+                        if (field.column_type === 'multiline') {
+                            multilineFields.push(field.column_name);
+                        }
                     }
                 }
             }
         }
         
         apiNameMap["name"] = "name"; 
-        return apiNameMap; 
+        return { apiNameMap, multilineFields }; 
 
     } catch (error) {
         throw new Error(`Failed to get task layout map: ${parseError(error).message}`);
@@ -323,16 +312,10 @@ const handleCreateSingleTask = async (data, providedMap = null) => {
 
     try {
         const path = `/portal/${portalId}/projects/${projectId}/tasks`;
-        const apiNameMap = providedMap || await getApiNameMap(portalId, projectId, activeProfile);
-        const taskData = buildSmartV3Payload(data, apiNameMap);
+        const layoutData = providedMap || await getApiNameMapAndMultiline(portalId, projectId, activeProfile);
+        const apiNameMap = layoutData.apiNameMap || layoutData; 
         
-        console.log(`\n========== [DEBUG: FINAL PAYLOAD GOING TO ZOHO] ==========`);
-        console.log(`🎯 Target Email: ${data.bulkDefaultData?.Email || 'Unknown (Check Custom Fields)'}`);
-        console.log(`📝 Description HTML sent to Zoho:`);
-        console.log(taskData.description || "No description");
-        console.log(`\n📦 Full JSON Payload:`);
-        console.log(JSON.stringify(taskData, null, 2));
-        console.log(`==========================================================\n`);
+        const taskData = buildSmartV3Payload(data, apiNameMap);
 
         const reverseMap = {};
         if (apiNameMap) Object.entries(apiNameMap).forEach(([label, apiName]) => reverseMap[apiName] = label);
@@ -352,34 +335,68 @@ const handleCreateSingleTask = async (data, providedMap = null) => {
 };
 
 const handleStartBulkCreateTasks = async (socket, data) => {
-    const { formData, selectedProfileName } = data;
-    const { taskName, primaryField, primaryValues, projectId, taskDescription, tasklistId, delay, bulkDefaultData, stopAfterFailures = 4, enableTracking } = formData; 
+    const { formData, selectedProfileName, activeProfile: frontendProfile } = data;
+    const { taskName, primaryField, primaryValues, taskDescription, delay, bulkDefaultData, stopAfterFailures = 4, enableTracking, smartSplitterText, appendAccountNumber } = formData; 
+    let { projectId, tasklistId } = formData; 
     
     const profiles = readProfiles();
     const realProfile = getRealProjectsProfile(profiles, selectedProfileName);
 
-    const jobId = createJobId(socket.id, selectedProfileName, 'projects');
+    const jobId = `${selectedProfileName}_projects`; // 🚨 PREDICTABLE ID FOR DATABASE
     activeJobs[jobId] = { status: 'running', consecutiveFailures: 0, stopAfterFailures: Number(stopAfterFailures) };
     
     const tasksToProcess = primaryValues.split('\n').map(name => name.trim()).filter(t => t.length > 0);
     if (tasksToProcess.length === 0) return socket.emit('bulkError', { message: 'No valid primary values provided.', profileName: selectedProfileName, jobType: 'projects' });
     
-    const jobState = activeJobs[jobId] || {};
-    jobState.totalToProcess = tasksToProcess.length;
+    // 🚨 INITIALIZE JOB IN DATABASE
+    let resultsArray = [];
+    db.upsertJob({
+        id: jobId,
+        profileName: selectedProfileName,
+        jobType: 'projects',
+        status: 'running',
+        totalToProcess: tasksToProcess.length,
+        consecutiveFailures: 0,
+        stopAfterFailures: Number(stopAfterFailures),
+        formData: formData,
+        results: resultsArray
+    });
 
     try {
-        if (!realProfile || !realProfile.projects) throw new Error("Projects profile not found.");
+        if (!realProfile) throw new Error("Projects profile not found.");
         
-        const portalId = realProfile.projects.portalId;
-        const sharedApiNameMap = await getApiNameMap(portalId, projectId, realProfile);
+        const portalId = realProfile.projects?.portalId || frontendProfile?.projects?.portalId;
+        if (!portalId) throw new Error("Portal ID missing. Please refresh the page to sync your Zoho Portal.");
+
+        if (!projectId) {
+            const projResponse = await makeApiCall('get', `/portal/${portalId}/projects`, null, realProfile, 'projects');
+            const projList = Array.isArray(projResponse.data) ? projResponse.data : (projResponse.data.projects || []);
+            if (projList.length > 0) projectId = projList[0].id;
+            else throw new Error("No projects found in this account.");
+        }
+
+        if (!tasklistId) {
+            const tlResponse = await makeApiCall('get', `/portal/${portalId}/all-tasklists`, null, realProfile, 'projects', { project_id: projectId });
+            const tlList = tlResponse.data.tasklists || [];
+            if (tlList.length > 0) tasklistId = tlList[0].id;
+            else throw new Error("No task lists found in this project.");
+        }
+
+        const { apiNameMap, multilineFields } = await getApiNameMapAndMultiline(portalId, projectId, realProfile);
 
         for (let i = 0; i < tasksToProcess.length; i++) {
             if (!activeJobs[jobId] || activeJobs[jobId].status === 'ended') break;
-            while (activeJobs[jobId]?.status === 'paused') await new Promise(resolve => setTimeout(resolve, 500));
+            
+            while (activeJobs[jobId]?.status === 'paused') {
+                db.updateJobStatus(jobId, 'paused');
+                await new Promise(resolve => setTimeout(resolve, 500));
+            }
+            db.updateJobStatus(jobId, 'running');
 
             if (activeJobs[jobId].stopAfterFailures > 0 && activeJobs[jobId].consecutiveFailures >= activeJobs[jobId].stopAfterFailures) {
                  if (activeJobs[jobId].status !== 'paused') {
                      activeJobs[jobId].status = 'paused';
+                     db.updateJobStatus(jobId, 'paused');
                      socket.emit('jobPaused', { profileName: selectedProfileName, reason: `Paused automatically after failures.` });
                  }
                  while (activeJobs[jobId]?.status === 'paused') await new Promise(resolve => setTimeout(resolve, 500));
@@ -391,31 +408,70 @@ const handleStartBulkCreateTasks = async (socket, data) => {
             const currentValue = tasksToProcess[i];
             let dataForThisTask = { ...bulkDefaultData }; 
             if (primaryField !== 'name') dataForThisTask[primaryField] = currentValue; 
-            
+
+            if (smartSplitterText && smartSplitterText.trim() !== '') {
+                let customSmartText = smartSplitterText;
+                if (appendAccountNumber && selectedProfileName) {
+                    const suffix = `<br><br><br><br><br><br>${selectedProfileName}`;
+                    if (!customSmartText.endsWith(suffix)) customSmartText = `${customSmartText}${suffix}`;
+                }
+                const sortedFields = [...multilineFields].sort((a, b) => a.localeCompare(b, undefined, {numeric: true, sensitivity: 'base'}));
+                if (sortedFields.length > 0) {
+                    const numFields = sortedFields.length;
+                    const chunkSize = Math.ceil(customSmartText.length / numFields); 
+                    for (let j = 0; j < numFields; j++) {
+                        const fieldApiName = sortedFields[j];
+                        const startIndex = j * chunkSize;
+                        dataForThisTask[fieldApiName] = customSmartText.substring(startIndex, startIndex + chunkSize);
+                    }
+                }
+            } else if (appendAccountNumber && selectedProfileName) {
+                const accountIndex = profiles.findIndex(p => p.profileName === selectedProfileName) + 1;
+                const sortedFields = [...multilineFields].sort((a, b) => a.localeCompare(b, undefined, {numeric: true, sensitivity: 'base'}));
+                sortedFields.forEach(key => {
+                    if (dataForThisTask[key] && typeof dataForThisTask[key] === 'string') {
+                        const prefix = `${selectedProfileName}<br><br>`;
+                        if (!dataForThisTask[key].startsWith(prefix)) {
+                            dataForThisTask[key] = `${prefix}${dataForThisTask[key]}<br><br><br>account number ${accountIndex}`;
+                        }
+                    }
+                });
+            }
+
             const trackingData = injectProjectsTracking(dataForThisTask, taskDescription, currentValue, selectedProfileName, realProfile.projects, enableTracking);
-            
             dataForThisTask = trackingData.updatedDataForThisTask;
-            const finalTaskDescription = trackingData.updatedTaskDescription;
 
             const result = await handleCreateSingleTask({
                 portalId, projectId, taskName: primaryField === 'name' ? currentValue : `${taskName}_${i + 1}`, 
-                taskDescription: finalTaskDescription, tasklistId, selectedProfileName, bulkDefaultData: dataForThisTask 
-            }, sharedApiNameMap);
+                taskDescription: trackingData.updatedTaskDescription, tasklistId, selectedProfileName, bulkDefaultData: dataForThisTask 
+            }, { apiNameMap, multilineFields }); 
             
+            // 🚨 2. UPDATE DATABASE AND EMIT RESULT
+            let resultData = { projectName: currentValue, profileName: selectedProfileName };
             if (result.success) {
-                if (activeJobs[jobId]) activeJobs[jobId].consecutiveFailures = 0;
-                socket.emit('projectsResult', { projectName: currentValue, success: true, details: result.message, fullResponse: result.fullResponse, profileName: selectedProfileName });
+                activeJobs[jobId].consecutiveFailures = 0;
+                resultData = { ...resultData, success: true, details: result.message, fullResponse: result.fullResponse };
             } else {
-                if (activeJobs[jobId]) activeJobs[jobId].consecutiveFailures++;
-                socket.emit('projectsResult', { projectName: currentValue, success: false, error: result.error, fullResponse: result.fullResponse, profileName: selectedProfileName });
+                activeJobs[jobId].consecutiveFailures++;
+                resultData = { ...resultData, success: false, error: result.error, fullResponse: result.fullResponse };
             }
+            
+            resultsArray.push(resultData);
+            db.updateJobProgress(jobId, activeJobs[jobId].status, activeJobs[jobId].consecutiveFailures, resultsArray);
+            socket.emit('projectsResult', resultData);
         }
     } catch (error) {
+        db.updateJobStatus(jobId, 'error');
         socket.emit('bulkError', { message: error.message, profileName: selectedProfileName, jobType: 'projects' });
     } finally {
         if (activeJobs[jobId]) {
-            if (activeJobs[jobId].status === 'ended') socket.emit('bulkEnded', { profileName: selectedProfileName, jobType: 'projects' });
-            else socket.emit('bulkComplete', { profileName: selectedProfileName, jobType: 'projects' });
+            if (activeJobs[jobId].status === 'ended') {
+                db.updateJobStatus(jobId, 'ended');
+                socket.emit('bulkEnded', { profileName: selectedProfileName, jobType: 'projects' });
+            } else {
+                db.updateJobStatus(jobId, 'complete');
+                socket.emit('bulkComplete', { profileName: selectedProfileName, jobType: 'projects' });
+            }
             delete activeJobs[jobId];
         }
     }
@@ -689,6 +745,17 @@ const handleUpdateTaskField = async ({ activeProfile, portalId, projectId, field
     }
 };
 
+// 🚨 3. CLEAR HANDLERS
+const handleClearJob = (socket, data) => {
+    db.deleteJob(data.profileName, data.jobType);
+    socket.emit('jobCleared', { profileName: data.profileName, jobType: data.jobType });
+};
+
+const handleClearAllJobs = (socket, data) => {
+    db.deleteAllJobsByType(data.jobType);
+    socket.emit('allJobsCleared', { jobType: data.jobType });
+};
+
 module.exports = {
     setActiveJobs,
     handleGetPortals,
@@ -702,5 +769,7 @@ module.exports = {
     handleUpdateProjectDetails,
     handleGetProjectDetails,
     handleCreateTaskField,
-    handleUpdateTaskField
+    handleUpdateTaskField,
+    handleClearJob,         // Export new
+    handleClearAllJobs      // Export new
 };

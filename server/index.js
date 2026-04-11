@@ -19,6 +19,7 @@ const meetingHandler = require('./meeting-handler');
 const fsmHandler = require('./fsm-handler'); 
 const bookingsHandler = require('./bookings-handler'); 
 const ORDER_FILE = path.join(__dirname, "sidebar-order.json");
+const db = require('./database');
 require('dotenv').config();
 
 const { ticketQueueEvents, ticketQueue } = require('./queue');
@@ -588,6 +589,15 @@ io.on('connection', (socket) => {
         if (activeProfile) { bookingsHandler.handleUpdateBookingStaff(liveSocket, { ...data, activeProfile }); } 
         else { socket.emit('updateBookingStaffResult', { success: false, error: "Profile not found." }); }
     });
+	
+	socket.on('requestDatabaseSync', () => {
+    try {
+        const allJobs = db.getAllJobs();
+        socket.emit('databaseSync', allJobs);
+    } catch (error) {
+        console.error('[DB SYNC] Error fetching state:', error);
+    }
+});
 	
 	
 });

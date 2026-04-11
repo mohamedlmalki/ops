@@ -80,7 +80,7 @@ const ImageToolDialog = ({ onApply }: { onApply: (html: string) => void }) => {
 export const TicketForm: React.FC<TicketFormProps> = ({
   onSubmit, isProcessing, isPaused, onPauseResume, onEndJob,
   formData, onFormDataChange, socket, selectedProfile, onFetchFailures,
-  onClearTicketLogs, jobState, onRetryFailed, failedCount, onApplyAllClick, onOpenInboxRadarClick
+  onClearTicketLogs, jobState, onRetryFailed, failedCount, onApplyAllClick
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
@@ -194,8 +194,6 @@ export const TicketForm: React.FC<TicketFormProps> = ({
               </CardTitle>
             </div>
             <div className="flex items-center space-x-2 flex-wrap gap-y-2">
-			
-			
               <Button 
                 variant="outline" 
                 size="sm" 
@@ -427,6 +425,40 @@ export const TicketForm: React.FC<TicketFormProps> = ({
                   </Button>
                 </div>
               )}
+
+              {/* 🚨 NEW DATABASE CLEAR BUTTONS FOR DESK */}
+              <div className="flex justify-end space-x-2 mt-4">
+                  <Button 
+                      type="button"
+                      variant="outline" 
+                      size="sm"
+                      className="border-red-200 text-red-600 hover:bg-red-50 text-xs h-8"
+                      onClick={() => {
+                          if(window.confirm("Clear this account's job history from the database?")) {
+                              socket?.emit('clearJob', { profileName: selectedProfile?.profileName, jobType: 'ticket' });
+                          }
+                      }}
+                      disabled={isProcessing || !selectedProfile}
+                  >
+                      <Trash2 className="w-3 h-3 mr-1" /> Clear This Account
+                  </Button>
+
+                  <Button 
+                      type="button"
+                      variant="ghost" 
+                      size="sm"
+                      className="text-xs text-red-500 hover:text-red-700 h-8"
+                      onClick={() => {
+                          if(window.confirm("DANGER: This will delete ALL Desk job history for ALL accounts!")) {
+                              socket?.emit('clearAllJobs', { jobType: 'ticket' });
+                          }
+                      }}
+                      disabled={isProcessing}
+                  >
+                      Wipe All History
+                  </Button>
+              </div>
+
             </div>
           </form>
         </CardContent>

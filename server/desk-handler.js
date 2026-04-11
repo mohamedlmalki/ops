@@ -2,6 +2,7 @@
 const { Queue } = require('bullmq');
 const { connection, hireCashier } = require('./worker');
 const { makeApiCall, parseError, createJobId, readProfiles } = require('./utils');
+const db = require('./database'); // 🚨 ADDED ONLY THE DATABASE IMPORT
 
 let activeJobs = {};
 
@@ -143,6 +144,23 @@ const handleStartBulkCreate = async (socket, data) => {
     
     activeJobs[jobId] = { status: 'running', consecutiveFailures: 0, stopAfterFailures: Number(stopAfterFailures) };
     
+    // 🚨 ADDED: INITIALIZE THE JOB IN THE DATABASE
+    try {
+        db.upsertJob({
+            id: jobId,
+            profileName: selectedProfileName,
+            jobType: 'ticket',
+            status: 'running',
+            totalToProcess: emails.length,
+            consecutiveFailures: 0,
+            stopAfterFailures: Number(stopAfterFailures),
+            formData: data,
+            results: []
+        });
+    } catch (err) {
+        console.error("DB Initialization Error:", err);
+    }
+
     try {
         if (!activeProfile) throw new Error('Profile not found.');
         const deskConfig = activeProfile.desk;
@@ -221,19 +239,47 @@ const processSingleTicketJob = async (jobData) => {
 
         const endTime = Date.now();
         const duration = endTime - startTime;
-        // 🛑 ADDED THE EXACT FINISH TIMESTAMP HERE
         console.log(`✅ [WORKER DONE] Ticket ${newTicket.ticketNumber} finished at ${new Date(endTime).toISOString()}. Zoho API took exactly: ${duration}ms.`);
 
-        return { email, success: true, ticketNumber: newTicket.ticketNumber, details: successMessage, fullResponse: fullResponseData, profileName: selectedProfileName };
+        const resultData = { email, success: true, ticketNumber: newTicket.ticketNumber, details: successMessage, fullResponse: fullResponseData, profileName: selectedProfileName };
+
+        // 🚨 ADDED: SAVE SUCCESS TO DATABASE
+        try {
+            const jobRecord = db.getJobById(jobId);
+            if (jobRecord) {
+                const results = jobRecord.results || [];
+                results.push(resultData);
+                db.updateJobProgress(jobId, activeJobs[jobId]?.status || 'running', 0, results);
+            }
+        } catch (e) {
+            console.error("DB Update Error (Success):", e);
+        }
+
+        return resultData;
 
     } catch (error) {
         const endTime = Date.now();
         const duration = endTime - startTime;
-        // 🛑 ADDED THE EXACT FINISH TIMESTAMP HERE FOR ERRORS TOO
         console.log(`❌ [WORKER ERROR] Ticket failed at ${new Date(endTime).toISOString()}. Zoho API took exactly: ${duration}ms.`);
 
         const { message, fullResponse } = parseError(error);
-        throw new Error(JSON.stringify({ email, success: false, error: message, fullResponse, profileName: selectedProfileName }));
+        const errorData = { email, success: false, error: message, fullResponse, profileName: selectedProfileName };
+
+        // 🚨 ADDED: SAVE FAILURE TO DATABASE
+        try {
+            const jobRecord = db.getJobById(jobId);
+            if (jobRecord) {
+                const results = jobRecord.results || [];
+                results.push(errorData);
+                const currentFails = (activeJobs[jobId]?.consecutiveFailures || 0) + 1;
+                if (activeJobs[jobId]) activeJobs[jobId].consecutiveFailures = currentFails;
+                db.updateJobProgress(jobId, activeJobs[jobId]?.status || 'running', currentFails, results);
+            }
+        } catch (e) {
+            console.error("DB Update Error (Failure):", e);
+        }
+
+        throw new Error(JSON.stringify(errorData));
     }
 };
 
@@ -427,6 +473,18 @@ const handleGetDeskMailAddresses = async (socket, data) => {
     }
 };
 
+// 🚨 ADDED: DATABASE CLEAR HANDLERS
+const handleClearJob = (socket, data) => {
+    db.deleteJob(data.profileName, data.jobType);
+    socket.emit('jobCleared', { profileName: data.profileName, jobType: data.jobType });
+};
+
+const handleClearAllJobs = (socket, data) => {
+    db.deleteAllJobsByType(data.jobType);
+    socket.emit('allJobsCleared', { jobType: data.jobType });
+};
+
 module.exports = {
-    setActiveJobs, getActiveJobs, handleSendTestTicket, handleStartBulkCreate, handleGetEmailFailures, handleClearEmailFailures, handleGetMailReplyAddressDetails, handleUpdateMailReplyAddressDetails, handleSendSingleTicket, handleVerifyTicketEmail, handleGetDeskOrganizations, handleGetDeskDepartments, handleGetDeskMailAddresses, processSingleTicketJob
+    setActiveJobs, getActiveJobs, handleSendTestTicket, handleStartBulkCreate, handleGetEmailFailures, handleClearEmailFailures, handleGetMailReplyAddressDetails, handleUpdateMailReplyAddressDetails, handleSendSingleTicket, handleVerifyTicketEmail, handleGetDeskOrganizations, handleGetDeskDepartments, handleGetDeskMailAddresses, processSingleTicketJob,
+    handleClearJob, handleClearAllJobs // 🚨 EXPORTED DB ACTIONS
 };

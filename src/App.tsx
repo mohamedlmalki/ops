@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, useQueryClient, useQuery } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
 import { io, Socket } from 'socket.io-client';
 import { useToast } from '@/hooks/use-toast';
@@ -426,13 +426,9 @@ export interface BookingJobState {
 }
 export interface BookingJobs { [profileName: string]: BookingJobState; }
 
-
 // --- INITIAL STATES ---
-
 const createInitialJobState = (): JobState => ({
-  formData: {
-    emails: '', subject: '', description: '', delay: 1, sendDirectReply: false, verifyEmail: false, displayName: '', stopAfterFailures: 4, enableTracking: false,
-  },
+  formData: { emails: '', subject: '', description: '', delay: 1, sendDirectReply: false, verifyEmail: false, displayName: '', stopAfterFailures: 4, enableTracking: false },
   results: [], isProcessing: false, isPaused: false, isComplete: false, processingStartTime: null, processingTime: 0, totalTicketsToProcess: 0, countdown: 0, currentDelay: 1, filterText: '',
 });
 const createInitialInvoiceJobState = (): InvoiceJobState => ({
@@ -460,31 +456,8 @@ const createInitialCreatorJobState = (): CreatorJobState => ({
     results: [], isProcessing: false, isPaused: false, isComplete: false, processingStartTime: null, processingTime: 0, totalToProcess: 0, countdown: 0, currentDelay: 1, filterText: '',
 });
 const createInitialProjectsJobState = (): ProjectsJobState => ({
-    formData: { 
-        taskName: '', 
-        primaryField: 'name', 
-        primaryValues: '', 
-        taskDescription: '', 
-        projectId: '', 
-        tasklistId: '', 
-        delay: 1, 
-        bulkDefaultData: {}, 
-        emails: '', 
-        stopAfterFailures: 4, 
-        enableTracking: false, 
-        appendAccountNumber: false, 
-        smartSplitterText: '' 
-    },
-    results: [], 
-    isProcessing: false, 
-    isPaused: false, 
-    isComplete: false, 
-    processingStartTime: null, 
-    processingTime: 0, 
-    totalToProcess: 0, 
-    countdown: 0, 
-    currentDelay: 1, 
-    filterText: ''
+    formData: { taskName: '', primaryField: 'name', primaryValues: '', taskDescription: '', projectId: '', tasklistId: '', delay: 1, bulkDefaultData: {}, emails: '', stopAfterFailures: 4, enableTracking: false, appendAccountNumber: false, smartSplitterText: '' },
+    results: [], isProcessing: false, isPaused: false, isComplete: false, processingStartTime: null, processingTime: 0, totalToProcess: 0, countdown: 0, currentDelay: 1, filterText: ''
 });
 const createInitialWebinarJobState = (): WebinarJobState => ({
     formData: { webinarId: '', webinar: null, emails: '', firstName: '', delay: 1, displayName: 'webinar_registrations', },
@@ -499,79 +472,39 @@ const createInitialBookingJobState = (): BookingJobState => ({
     results: [], isProcessing: false, isPaused: false, isComplete: false, processingStartTime: null, processingTime: 0, totalToProcess: 0, countdown: 0, currentDelay: 0, filterText: '',
 });
 
-
-// 👁️ THE GOD MODE CACHE HOOK
-function usePersistentJobs<T>(storageKey: string, initialValue: T) {
-    const [state, setState] = useState<T>(() => {
-        try {
-            const item = window.localStorage.getItem(storageKey);
-            if (item) {
-                const parsed = JSON.parse(item);
-                const safeState: any = {};
-                for (const profile in parsed) {
-                    const job = parsed[profile];
-                    safeState[profile] = {
-                        ...job,
-                        isProcessing: job.isProcessing, 
-                        isPaused: job.isPaused
-                    };
-                }
-                return safeState as T;
-            }
-        } catch (error) {
-            console.warn(`Error reading localStorage key "${storageKey}":`, error);
-        }
-        return initialValue;
-    });
-
-    useEffect(() => {
-        try {
-            const lightState: any = {};
-            for (const profile in state) {
-                const job = (state as any)[profile];
-                lightState[profile] = {
-                    ...job,
-                    results: job.results ? job.results.map((r: any) => ({
-                        ...r,
-                        fullResponse: undefined 
-                    })) : []
-                };
-            }
-            window.localStorage.setItem(storageKey, JSON.stringify(lightState));
-        } catch (error) {
-            console.warn(`Error saving to localStorage:`, error);
-        }
-    }, [state, storageKey]);
-
-    return [state, setState] as const;
-}
-
 const MainApp = () => {
     const { toast } = useToast();
     const location = useLocation();
     
-    // STATE SYSTEM
-    const [jobs, setJobs] = usePersistentJobs<Jobs>('zoho_cache_jobs_ticket', {});
-    const [invoiceJobs, setInvoiceJobs] = usePersistentJobs<InvoiceJobs>('zoho_cache_jobs_invoice', {});
-    const [catalystJobs, setCatalystJobs] = usePersistentJobs<CatalystJobs>('zoho_cache_jobs_catalyst', {}); 
-    const [emailJobs, setEmailJobs] = usePersistentJobs<EmailJobs>('zoho_cache_jobs_email', {}); 
-    const [qntrlJobs, setQntrlJobs] = usePersistentJobs<QntrlJobs>('zoho_cache_jobs_qntrl', {});
-    const [peopleJobs, setPeopleJobs] = usePersistentJobs<PeopleJobs>('zoho_cache_jobs_people', {});
-    const [creatorJobs, setCreatorJobs] = usePersistentJobs<CreatorJobs>('zoho_cache_jobs_creator', {});
-    const [projectsJobs, setProjectsJobs] = usePersistentJobs<ProjectsJobs>('zoho_cache_jobs_projects', {});
-    const [webinarJobs, setWebinarJobs] = usePersistentJobs<WebinarJobs>('zoho_cache_jobs_webinar', {});
-    const [fsmContactJobs, setFsmContactJobs] = usePersistentJobs<FsmContactJobs>('zoho_cache_jobs_fsmContact', {});
-    const [bookingJobs, setBookingJobs] = usePersistentJobs<BookingJobs>('zoho_cache_jobs_booking', {});
+    // 🚨 REPLACED `usePersistentJobs` with standard React `useState`. The DB manages memory now!
+    const [jobs, setJobs] = useState<Jobs>({});
+    const [invoiceJobs, setInvoiceJobs] = useState<InvoiceJobs>({});
+    const [catalystJobs, setCatalystJobs] = useState<CatalystJobs>({}); 
+    const [emailJobs, setEmailJobs] = useState<EmailJobs>({}); 
+    const [qntrlJobs, setQntrlJobs] = useState<QntrlJobs>({});
+    const [peopleJobs, setPeopleJobs] = useState<PeopleJobs>({});
+    const [creatorJobs, setCreatorJobs] = useState<CreatorJobs>({});
+    const [projectsJobs, setProjectsJobs] = useState<ProjectsJobs>({});
+    const [webinarJobs, setWebinarJobs] = useState<WebinarJobs>({});
+    const [fsmContactJobs, setFsmContactJobs] = useState<FsmContactJobs>({});
+    const [bookingJobs, setBookingJobs] = useState<BookingJobs>({});
 
     const socketRef = useRef<Socket | null>(null);
     const queryClient = useQueryClient();
 
     const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
     const [editingProfile, setEditingProfile] = useState<Profile | null>(null);
-    
     const [isStartingAll, setIsStartingAll] = useState(false);
-    
     const abortStartAllRef = useRef(false); 
+
+    const { data: savedProfiles = [] } = useQuery<Profile[]>({
+        queryKey: ['profiles'],
+        queryFn: async () => {
+            const response = await fetch(`${SERVER_URL}/api/profiles`);
+            return response.ok ? response.json() : [];
+        },
+        refetchOnWindowFocus: false,
+    });
 
     useJobTimer(jobs, setJobs, 'ticket');
     useJobTimer(invoiceJobs, setInvoiceJobs, 'invoice');
@@ -597,14 +530,11 @@ const MainApp = () => {
             try {
                 const profilesRes = await fetch(`${SERVER_URL}/api/profiles`);
                 const profiles = await profilesRes.json();
-
                 const trackingUrls = new Set<string>();
                 profiles.forEach((p: Profile) => {
                     if (p.desk?.cloudflareTrackingUrl) {
                         let baseUrl = p.desk.cloudflareTrackingUrl;
-                        if (!baseUrl.endsWith('/api/logs')) {
-                            baseUrl = baseUrl.replace(/\/$/, '') + '/api/logs';
-                        }
+                        if (!baseUrl.endsWith('/api/logs')) baseUrl = baseUrl.replace(/\/$/, '') + '/api/logs';
                         trackingUrls.add(baseUrl);
                     }
                 });
@@ -613,13 +543,10 @@ const MainApp = () => {
                     try {
                         const res = await fetch(url);
                         const data = await res.json();
-                        
                         if (data.success && data.logs) {
-                            data.logs.forEach((log: { email: string, ticketId: string, openedAt: string }) => {
+                            data.logs.forEach((log: any) => {
                                 const logId = `${log.email}_${log.openedAt}`;
-                                if (!lastNotifiedRef.current.has(logId)) {
-                                    lastNotifiedRef.current.add(logId); 
-                                }
+                                if (!lastNotifiedRef.current.has(logId)) lastNotifiedRef.current.add(logId); 
                             });
                         }
                     } catch (e) { }
@@ -637,97 +564,100 @@ const MainApp = () => {
 
         socket.on('connect', () => {
             toast({ title: "Connected to server!" });
-            socket.emit('requestActiveJobs');
+            // 🚨 REQUEST THE DATABASE TRUTH ON LOAD
+            socket.emit('requestDatabaseSync'); 
         });
           
         const handleWakeUp = () => {
             if (document.visibilityState === 'visible') {
-                if (!socket.connected) {
-                    socket.connect();
-                }
-                socket.emit('requestActiveJobs');
+                if (!socket.connected) socket.connect();
+                socket.emit('requestDatabaseSync');
             }
         };
         document.addEventListener("visibilitychange", handleWakeUp);
 
-        socket.on('activeJobsSync', (serverActiveJobs: string[]) => {
-            const cleanupStuckJobs = (jobsObj: any, setJobsFn: any, jobType: string) => {
-                let hasChanges = false;
-                const safeState = { ...jobsObj };
+        // 🚨 RECEIVE THE DATABASE TRUTH AND UPDATE UI EXACTLY
+        socket.on('databaseSync', (dbJobs: any[]) => {
+            const nextJobs: any = {}; const nextInvoice: any = {}; const nextCatalyst: any = {};
+            const nextEmail: any = {}; const nextQntrl: any = {}; const nextPeople: any = {};
+            const nextCreator: any = {}; const nextProjects: any = {}; const nextWebinar: any = {};
+            const nextFsm: any = {}; const nextBooking: any = {};
 
-                for (const profile in safeState) {
-                    const job = safeState[profile];
-                    const expectedJobId = `${profile}_${jobType}`;
-                    
-                    const isJobActuallyRunning = serverActiveJobs.some(id => 
-                        id === expectedJobId || id.endsWith(`_${expectedJobId}`)
-                    );
+            dbJobs.forEach(dbJob => {
+                const pName = dbJob.profileName;
+                const type = dbJob.jobType;
+                const stateObj = {
+                    formData: dbJob.formData || {},
+                    results: dbJob.results || [],
+                    isProcessing: dbJob.status === 'running',
+                    isPaused: dbJob.status === 'paused',
+                    isComplete: dbJob.status === 'complete' || dbJob.status === 'ended',
+                    processingStartTime: dbJob.status === 'running' ? new Date() : null,
+                    processingTime: 0,
+                    totalToProcess: dbJob.totalToProcess || 0,
+                    totalTicketsToProcess: dbJob.totalToProcess || 0,
+                    countdown: 0,
+                    currentDelay: dbJob.formData?.delay || dbJob.formData?.bulkDelay || 1,
+                    filterText: ''
+                };
 
-                    if ((job.isProcessing || job.isPaused) && !isJobActuallyRunning) {
-                        safeState[profile] = { ...job, isProcessing: false, isPaused: false };
-                        hasChanges = true;
-                    }
-                }
-                if (hasChanges) setJobsFn(safeState);
-            };
+                if (type === 'ticket') nextJobs[pName] = stateObj;
+                else if (type === 'invoice') nextInvoice[pName] = stateObj;
+                else if (type === 'catalyst') nextCatalyst[pName] = stateObj;
+                else if (type === 'email') nextEmail[pName] = stateObj;
+                else if (type === 'qntrl') nextQntrl[pName] = stateObj;
+                else if (type === 'people') nextPeople[pName] = stateObj;
+                else if (type === 'creator') nextCreator[pName] = stateObj;
+                else if (type === 'projects') nextProjects[pName] = stateObj;
+                else if (type === 'webinar') nextWebinar[pName] = stateObj;
+                else if (type === 'fsm-contact') nextFsm[pName] = stateObj;
+                else if (type === 'bookings') nextBooking[pName] = stateObj;
+            });
 
-            cleanupStuckJobs(jobs, setJobs, 'ticket');
-            cleanupStuckJobs(invoiceJobs, setInvoiceJobs, 'invoice');
-            cleanupStuckJobs(catalystJobs, setCatalystJobs, 'catalyst');
-            cleanupStuckJobs(emailJobs, setEmailJobs, 'email');
-            cleanupStuckJobs(qntrlJobs, setQntrlJobs, 'qntrl');
-            cleanupStuckJobs(peopleJobs, setPeopleJobs, 'people');
-            cleanupStuckJobs(creatorJobs, setCreatorJobs, 'creator');
-            cleanupStuckJobs(projectsJobs, setProjectsJobs, 'projects');
-            cleanupStuckJobs(webinarJobs, setWebinarJobs, 'webinar');
-            cleanupStuckJobs(fsmContactJobs, setFsmContactJobs, 'fsm-contact');
-            cleanupStuckJobs(bookingJobs, setBookingJobs, 'bookings');
+            setJobs(prev => ({ ...prev, ...nextJobs }));
+            setInvoiceJobs(prev => ({ ...prev, ...nextInvoice }));
+            setCatalystJobs(prev => ({ ...prev, ...nextCatalyst }));
+            setEmailJobs(prev => ({ ...prev, ...nextEmail }));
+            setQntrlJobs(prev => ({ ...prev, ...nextQntrl }));
+            setPeopleJobs(prev => ({ ...prev, ...nextPeople }));
+            setCreatorJobs(prev => ({ ...prev, ...nextCreator }));
+            setProjectsJobs(prev => ({ ...prev, ...nextProjects }));
+            setWebinarJobs(prev => ({ ...prev, ...nextWebinar }));
+            setFsmContactJobs(prev => ({ ...prev, ...nextFsm }));
+            setBookingJobs(prev => ({ ...prev, ...nextBooking }));
+        });
+
+        // 🚨 CLEAR JOB EVENTS
+        socket.on('jobCleared', ({ profileName, jobType }) => {
+            const clearProfile = (prev: any) => { const next = { ...prev }; delete next[profileName]; return next; };
+            if (jobType === 'ticket') setJobs(clearProfile);
+            else if (jobType === 'projects') setProjectsJobs(clearProfile);
+            // Can add others if needed later
+        });
+
+        socket.on('allJobsCleared', ({ jobType }) => {
+            if (jobType === 'ticket') setJobs({});
+            else if (jobType === 'projects') setProjectsJobs({});
         });
         
         socket.on('ticketResult', (result: any) => {
             if (!resultBuckets.current.ticket[result.profileName]) resultBuckets.current.ticket[result.profileName] = [];
             resultBuckets.current.ticket[result.profileName].push({ ...result, timestamp: new Date() });
         });
-        socket.on('invoiceResult', (result: any) => {
-            if (!resultBuckets.current.invoice[result.profileName]) resultBuckets.current.invoice[result.profileName] = [];
-            resultBuckets.current.invoice[result.profileName].push(result);
-        });
-        socket.on('catalystResult', (result: any) => {
-            if (!resultBuckets.current.catalyst[result.profileName]) resultBuckets.current.catalyst[result.profileName] = [];
-            resultBuckets.current.catalyst[result.profileName].push(result);
-        });
-        socket.on('emailResult', (result: any) => {
-            if (!resultBuckets.current.email[result.profileName]) resultBuckets.current.email[result.profileName] = [];
-            resultBuckets.current.email[result.profileName].push(result);
-        });
-        socket.on('qntrlResult', (result: any) => {
-            if (!resultBuckets.current.qntrl[result.profileName]) resultBuckets.current.qntrl[result.profileName] = [];
-            resultBuckets.current.qntrl[result.profileName].push({ ...result, timestamp: new Date() });
-        });
-        socket.on('peopleResult', (result: any) => {
-            if (!resultBuckets.current.people[result.profileName]) resultBuckets.current.people[result.profileName] = [];
-            resultBuckets.current.people[result.profileName].push({ ...result, timestamp: new Date() });
-        });
-        socket.on('creatorResult', (result: any) => {
-            if (!resultBuckets.current.creator[result.profileName]) resultBuckets.current.creator[result.profileName] = [];
-            resultBuckets.current.creator[result.profileName].push({ ...result, timestamp: new Date() });
-        });
         socket.on('projectsResult', (result: any) => {
             if (!resultBuckets.current.projects[result.profileName]) resultBuckets.current.projects[result.profileName] = [];
             resultBuckets.current.projects[result.profileName].push({ ...result, timestamp: new Date() });
         });
-        socket.on('webinarResult', (result: any) => {
-            if (!resultBuckets.current.webinar[result.profileName]) resultBuckets.current.webinar[result.profileName] = [];
-            resultBuckets.current.webinar[result.profileName].push(result);
-        });
-        socket.on('fsmContactResult', (result: any) => {
-            if (!resultBuckets.current.fsmContact[result.profileName]) resultBuckets.current.fsmContact[result.profileName] = [];
-            resultBuckets.current.fsmContact[result.profileName].push({ ...result, timestamp: new Date() });
-        });
-        socket.on('bookingResult', (result: any) => {
-            if (!resultBuckets.current.bookings[result.profileName]) resultBuckets.current.bookings[result.profileName] = [];
-            resultBuckets.current.bookings[result.profileName].push({ ...result, timestamp: new Date() });
-        });
+        // [Other bucket events remain the same - abbreviated for simplicity]
+        socket.on('invoiceResult', (result: any) => { if (!resultBuckets.current.invoice[result.profileName]) resultBuckets.current.invoice[result.profileName] = []; resultBuckets.current.invoice[result.profileName].push(result); });
+        socket.on('catalystResult', (result: any) => { if (!resultBuckets.current.catalyst[result.profileName]) resultBuckets.current.catalyst[result.profileName] = []; resultBuckets.current.catalyst[result.profileName].push(result); });
+        socket.on('emailResult', (result: any) => { if (!resultBuckets.current.email[result.profileName]) resultBuckets.current.email[result.profileName] = []; resultBuckets.current.email[result.profileName].push(result); });
+        socket.on('qntrlResult', (result: any) => { if (!resultBuckets.current.qntrl[result.profileName]) resultBuckets.current.qntrl[result.profileName] = []; resultBuckets.current.qntrl[result.profileName].push({ ...result, timestamp: new Date() }); });
+        socket.on('peopleResult', (result: any) => { if (!resultBuckets.current.people[result.profileName]) resultBuckets.current.people[result.profileName] = []; resultBuckets.current.people[result.profileName].push({ ...result, timestamp: new Date() }); });
+        socket.on('creatorResult', (result: any) => { if (!resultBuckets.current.creator[result.profileName]) resultBuckets.current.creator[result.profileName] = []; resultBuckets.current.creator[result.profileName].push({ ...result, timestamp: new Date() }); });
+        socket.on('webinarResult', (result: any) => { if (!resultBuckets.current.webinar[result.profileName]) resultBuckets.current.webinar[result.profileName] = []; resultBuckets.current.webinar[result.profileName].push(result); });
+        socket.on('fsmContactResult', (result: any) => { if (!resultBuckets.current.fsmContact[result.profileName]) resultBuckets.current.fsmContact[result.profileName] = []; resultBuckets.current.fsmContact[result.profileName].push({ ...result, timestamp: new Date() }); });
+        socket.on('bookingResult', (result: any) => { if (!resultBuckets.current.bookings[result.profileName]) resultBuckets.current.bookings[result.profileName] = []; resultBuckets.current.bookings[result.profileName].push({ ...result, timestamp: new Date() }); });
 
         const flushInterval = setInterval(() => {
             const flushJobs = (bucketObj: any, setFunc: any, initialBuilder: any, reverseOrder = false) => {
@@ -881,14 +811,8 @@ const MainApp = () => {
         };
     }, [toast]);
     
-    const handleOpenAddProfile = () => {
-        setEditingProfile(null);
-        setIsProfileModalOpen(true);
-    };
-    const handleOpenEditProfile = (profile: Profile) => {
-        setEditingProfile(profile);
-        setIsProfileModalOpen(true);
-    };
+    const handleOpenAddProfile = () => { setEditingProfile(null); setIsProfileModalOpen(true); };
+    const handleOpenEditProfile = (profile: Profile) => { setEditingProfile(profile); setIsProfileModalOpen(true); };
     const handleSaveProfile = async (profileData: Profile, originalProfileName?: string) => {
         const isEditing = !!originalProfileName;
         const url = isEditing ? `${SERVER_URL}/api/profiles/${encodeURIComponent(originalProfileName)}` : `${SERVER_URL}/api/profiles`;
@@ -896,21 +820,15 @@ const MainApp = () => {
 
         try {
             const response = await fetch(url, {
-                method,
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(profileData),
+                method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(profileData),
             });
             const result = await response.json();
             if (result.success) {
                 toast({ title: `Profile ${isEditing ? 'updated' : 'added'} successfully!` });
                 queryClient.invalidateQueries({ queryKey: ['profiles'] });
                 setIsProfileModalOpen(false);
-            } else {
-                toast({ title: 'Error', description: result.error, variant: 'destructive' });
-            }
-        } catch (error) {
-            toast({ title: 'Error', description: 'Failed to save profile.', variant: 'destructive' });
-        }
+            } else toast({ title: 'Error', description: result.error, variant: 'destructive' });
+        } catch (error) { toast({ title: 'Error', description: 'Failed to save profile.', variant: 'destructive' }); }
     };
     const handleDeleteProfile = async (profileNameToDelete: string) => {
         try {
@@ -919,12 +837,8 @@ const MainApp = () => {
             if (result.success) {
                 toast({ title: `Profile "${profileNameToDelete}" deleted successfully!` });
                 await queryClient.invalidateQueries({ queryKey: ['profiles'] });
-            } else {
-                toast({ title: 'Error', description: result.error, variant: 'destructive' });
-            }
-        } catch (error) {
-            toast({ title: 'Error', description: 'Failed to delete profile.', variant: 'destructive' });
-        }
+            } else toast({ title: 'Error', description: result.error, variant: 'destructive' });
+        } catch (error) { toast({ title: 'Error', description: 'Failed to delete profile.', variant: 'destructive' }); }
     };
 
     const handleStartAll = async () => {
@@ -932,11 +846,15 @@ const MainApp = () => {
         setIsStartingAll(true);
         abortStartAllRef.current = false; 
         let startedCount = 0;
-
         const path = location.pathname;
 
+        let liveProfiles: Profile[] = [];
+        try {
+            const res = await fetch(`${SERVER_URL}/api/profiles`);
+            liveProfiles = await res.json();
+        } catch (e) { }
+
         if (path === '/') {
-            // ================= DESK LOGIC =================
             const profilesToStart = Object.keys(jobs).filter(profileName => {
                 const job = jobs[profileName];
                 if (!job || job.isProcessing) return false;
@@ -947,9 +865,8 @@ const MainApp = () => {
             });
 
             if (profilesToStart.length === 0) {
-                toast({ title: "Nothing to start", description: "No idle Desk accounts found. Ensure they have Emails, a Subject, AND a Description!" });
-                setIsStartingAll(false);
-                return;
+                toast({ title: "Nothing to start", description: "No idle Desk accounts found." });
+                setIsStartingAll(false); return;
             }
 
             toast({ title: "Starting Desk Fleet...", description: `Initializing ${profilesToStart.length} accounts.` });
@@ -966,36 +883,41 @@ const MainApp = () => {
                 await new Promise(resolve => setTimeout(resolve, 1500)); 
             }
         } else if (path === '/projects-tasks') {
-            // ================= PROJECTS LOGIC =================
             const profilesToStart = Object.keys(projectsJobs).filter(profileName => {
                 const job = projectsJobs[profileName];
                 if (!job || job.isProcessing) return false;
                 const tasksList = job.formData?.primaryValues?.split('\n').map((e: string) => e.trim()).filter((e: string) => e !== '') || [];
-                const hasProject = !!job.formData?.projectId;
-                return tasksList.length > 0 && hasProject;
+                return tasksList.length > 0;
             });
 
             if (profilesToStart.length === 0) {
-                toast({ title: "Nothing to start", description: "No idle Project accounts found. Ensure they have Tasks and a Project selected!" });
-                setIsStartingAll(false);
-                return;
+                toast({ title: "Nothing to start", description: "No idle Project accounts found." });
+                setIsStartingAll(false); return;
             }
 
             toast({ title: "Starting Projects Fleet...", description: `Initializing ${profilesToStart.length} accounts.` });
 
             for (const pName of profilesToStart) {
                 if (abortStartAllRef.current) break;
+                
+                const matchedProfile = liveProfiles.find(p => p.profileName === pName);
+                const activeProfileData = matchedProfile ? { projects: { portalId: matchedProfile.projects?.portalId } } : undefined;
+
                 setProjectsJobs((prev: any) => {
                     const freshJob = prev[pName];
                     const tasksList = freshJob.formData.primaryValues.split('\n').map((e: string) => e.trim()).filter((e: string) => e !== '');
-                    socketRef.current?.emit('startBulkCreateTasks', { selectedProfileName: pName, formData: freshJob.formData });
+                    
+                    socketRef.current?.emit('startBulkCreateTasks', { 
+                        selectedProfileName: pName, 
+                        activeProfile: activeProfileData, 
+                        formData: freshJob.formData 
+                    });
+                    
                     return { ...prev, [pName]: { ...freshJob, results: [], isProcessing: true, isPaused: false, isComplete: false, processingStartTime: new Date(), totalToProcess: tasksList.length, processingTime: 0 }};
                 });
                 startedCount++;
                 await new Promise(resolve => setTimeout(resolve, 1500)); 
             }
-        } else {
-            toast({ title: "Not Supported Here", description: "The Start All feature only supports Desk and Projects right now." });
         }
 
         if (!abortStartAllRef.current && startedCount > 0) toast({ title: "Fleet Started", description: `Successfully started ${startedCount} jobs.` });
@@ -1081,42 +1003,29 @@ const MainApp = () => {
 
             <div className="fixed bottom-6 left-1/2 -translate-x-1/2 flex gap-3 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md p-3 rounded-full shadow-2xl border border-slate-200 dark:border-slate-800 z-[9999] transition-all">
                 <button 
-                    onClick={handleStartAll} 
-                    disabled={isStartingAll}
+                    onClick={handleStartAll} disabled={isStartingAll}
                     className={`flex items-center text-xs font-bold text-white px-5 py-2.5 rounded-full shadow-md transition-transform hover:scale-105 ${isStartingAll ? 'bg-blue-400' : 'bg-blue-600 hover:bg-blue-700'}`}
                 >
                     {isStartingAll ? '⏳ Starting...' : '🚀 Start All'}
                 </button>
-                <button 
-                    onClick={handlePauseAll} 
-                    className="flex items-center text-xs font-bold bg-yellow-500 hover:bg-yellow-600 text-white px-5 py-2.5 rounded-full shadow-md transition-transform hover:scale-105"
-                >
+                <button onClick={handlePauseAll} className="flex items-center text-xs font-bold bg-yellow-500 hover:bg-yellow-600 text-white px-5 py-2.5 rounded-full shadow-md transition-transform hover:scale-105">
                     ⏸️ Pause All
                 </button>
-                <button 
-                    onClick={handleResumeAll} 
-                    className="flex items-center text-xs font-bold bg-green-500 hover:bg-green-600 text-white px-5 py-2.5 rounded-full shadow-md transition-transform hover:scale-105"
-                >
+                <button onClick={handleResumeAll} className="flex items-center text-xs font-bold bg-green-500 hover:bg-green-600 text-white px-5 py-2.5 rounded-full shadow-md transition-transform hover:scale-105">
                     ▶️ Resume All
                 </button>
-                <button 
-                    onClick={handleEndAll} 
-                    className="flex items-center text-xs font-bold bg-red-500 hover:bg-red-600 text-white px-5 py-2.5 rounded-full shadow-md transition-transform hover:scale-105"
-                >
+                <button onClick={handleEndAll} className="flex items-center text-xs font-bold bg-red-500 hover:bg-red-600 text-white px-5 py-2.5 rounded-full shadow-md transition-transform hover:scale-105">
                     🛑 End All
                 </button>
             </div>
 
             <button 
                 onClick={() => {
-                    if (window.confirm("WARNING: Clear all stuck job caches? (Use if accounts are locked out)")) {
-                        localStorage.clear();
-                        window.location.reload();
-                    }
+                    if (window.confirm("Force Sync with Database?")) socketRef.current?.emit('requestDatabaseSync');
                 }}
-                className="fixed bottom-2 right-2 text-[10px] bg-red-100 text-red-800 px-2 py-1 rounded opacity-30 hover:opacity-100 z-[9999] transition-opacity"
+                className="fixed bottom-2 right-2 text-[10px] bg-blue-100 text-blue-800 px-2 py-1 rounded opacity-30 hover:opacity-100 z-[9999] transition-opacity"
             >
-                Fix Stuck Cache
+                Force DB Sync
             </button>
         </>
     );
